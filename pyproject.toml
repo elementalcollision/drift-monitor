@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "drift-monitor"
+version = "0.1.0"
+description = "Behavioral drift detection for AI agents across context compression boundaries"
+license = "MIT"
+requires-python = ">=3.9"
+authors = [
+    {name = "Dave"},
+]
+
+[project.optional-dependencies]
+embeddings = ["sentence-transformers>=2.0.0"]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+drift-monitor = "drift_monitor.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["drift_monitor*"]
