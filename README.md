@@ -15,8 +15,8 @@ Methodology inspired by [morrow.run's compression-monitor](https://morrow.run) (
 ```mermaid
 graph TD
     A[Observations] --> B[DualWindow]
-    B --> C[Anchor Window<br/><i>pre-boundary baseline</i>]
-    B --> D[Recent Window<br/><i>post-boundary activity</i>]
+    B --> C["Anchor Window (pre-boundary baseline)"]
+    B --> D["Recent Window (post-boundary activity)"]
 
     C --> E[GhostLexicon]
     C --> F[BehavioralFootprint]
@@ -30,9 +30,9 @@ graph TD
     G --> H
 
     H --> I[DriftReport]
-    I --> J[Composite Score<br/>0.0 - 1.0]
-    I --> K[CompressionType<br/>Classification]
-    I --> L[Severity<br/>LOW / MODERATE / HIGH]
+    I --> J["Composite Score (0.0 - 1.0)"]
+    I --> K[CompressionType Classification]
+    I --> L["Severity (LOW / MODERATE / HIGH)"]
 
     style C fill:#e8f4e8
     style D fill:#fce4e4
@@ -109,12 +109,12 @@ graph LR
         SD[Semantic Drift]
     end
 
-    GL -->|fired alone| VOC[VOCABULARY_ONLY<br/><i>Surface-level compression</i>]
-    BF -->|fired alone| OPS[OPERATIONAL<br/><i>Tool behavior changed</i>]
-    SD -->|fired alone| SEM[SEMANTIC_ONLY<br/><i>Topic shift</i>]
+    GL -->|fired alone| VOC["VOCABULARY_ONLY -- Surface-level compression"]
+    BF -->|fired alone| OPS["OPERATIONAL -- Tool behavior changed"]
+    SD -->|fired alone| SEM["SEMANTIC_ONLY -- Topic shift"]
 
-    GL & BF -->|both fired| INFRA[INFRASTRUCTURE<br/><i>Systemic change</i>]
-    GL & BF & SD -->|all fired| FULL[FULL_BOUNDARY<br/><i>Complete drift event</i>]
+    GL & BF -->|both fired| INFRA["INFRASTRUCTURE -- Systemic change"]
+    GL & BF & SD -->|all fired| FULL["FULL_BOUNDARY -- Complete drift event"]
 
     style FULL fill:#f8d7da
     style VOC fill:#fff3cd
@@ -165,7 +165,7 @@ sequenceDiagram
 
     loop Every experiment
         O->>H: observe_experiment(result)
-        H->>I: Feed to GhostLexicon,<br/>BehavioralFootprint,<br/>SemanticDrift
+        H->>I: Feed to all 3 instruments
 
         alt Assessment interval reached
             I->>H: Instrument readings
@@ -176,7 +176,7 @@ sequenceDiagram
     O->>H: get_drift_nudge()
 
     alt Drift threshold exceeded
-        H-->>O: "DRIFT ALERT: Your approach has<br/>narrowed significantly..."
+        H-->>O: DRIFT ALERT nudge message
         O->>L: Inject nudge into prompt
         L->>O: Adjusted experiment proposal
     else Within bounds
