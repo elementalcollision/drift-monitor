@@ -47,30 +47,44 @@ pip install git+https://github.com/elementalcollision/drift-monitor.git
 ```
 
 ```python
-from drift_monitor import GhostLexicon, BehavioralFootprint, SemanticDrift, DriftScorer
+from drift_monitor import DriftMonitor
 
-# One instrument per drift dimension; all share the same observe / mark_boundary protocol.
-instruments = [GhostLexicon(), BehavioralFootprint(), SemanticDrift(use_embeddings=False)]
+monitor = DriftMonitor()  # wraps all three instruments + the scorer
 
 # Feed pre-compression observations (anchor window).
-# Pass tool names under the "tools" key; Ghost Lexicon / Semantic ignore metadata.
+# Tool names go under the "tools" key (used by the behavioral instrument).
+for text in pre_compression_outputs:
+    monitor.observe(text, {"tools": ["search", "code"]})
+
+monitor.mark_boundary()  # Context was compressed here
+
+# Feed post-compression observations (recent window)
+for text in post_compression_outputs:
+    monitor.observe(text, {"tools": ["search"]})
+
+report = monitor.score()
+print(f"Drift: {report.composite_score:.3f} ({report.compression_type.name})")
+# e.g. Drift: 0.467 (FULL_BOUNDARY)
+```
+
+For finer control — a custom instrument set, per-instrument options, or only
+some dimensions — use the instruments together with `DriftScorer` directly:
+
+```python
+from drift_monitor import GhostLexicon, BehavioralFootprint, SemanticDrift, DriftScorer
+
+instruments = [GhostLexicon(), BehavioralFootprint(), SemanticDrift(use_embeddings=False)]
 for text in pre_compression_outputs:
     for instr in instruments:
         instr.observe(text, {"tools": ["search", "code"]})
-
-# Mark the compression boundary on every instrument.
 for instr in instruments:
     instr.mark_boundary()
-
-# Feed post-compression observations (recent window)
 for text in post_compression_outputs:
     for instr in instruments:
         instr.observe(text, {"tools": ["search"]})
 
-# Combine the per-instrument readings into a composite report.
 report = DriftScorer().score([instr.read() for instr in instruments])
 print(f"Drift: {report.composite_score:.3f} ({report.compression_type.name})")
-# e.g. Drift: 0.467 (FULL_BOUNDARY)
 ```
 
 ## Instruments

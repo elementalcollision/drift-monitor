@@ -9,11 +9,13 @@ from drift_monitor.instruments.base import InstrumentReading, Severity
 from drift_monitor.instruments.ghost_lexicon import GhostLexicon
 from drift_monitor.instruments.behavioral import BehavioralFootprint
 from drift_monitor.instruments.semantic import SemanticDrift
+from drift_monitor.monitor import DriftMonitor
 from drift_monitor.scoring import DriftScorer, DriftReport, CompressionType
 
 __version__ = "0.1.0"
 
 __all__ = [
+    "DriftMonitor",
     "GhostLexicon",
     "BehavioralFootprint",
     "SemanticDrift",
