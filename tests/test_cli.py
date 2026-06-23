@@ -4,6 +4,8 @@ import json
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from drift_monitor.cli import main
 from drift_monitor.storage import write_jsonl
 
@@ -74,3 +76,23 @@ def test_ghost_lexicon_command(capsys):
     result = json.loads(captured.out)
     assert result["instrument"] == "ghost_lexicon"
     assert result["score"] > 0.0
+
+
+def test_run_exits_cleanly_on_unreadable_path(capsys):
+    # A directory exists but open() raises OSError; the CLI must exit(1) with a
+    # friendly message rather than an uncaught traceback.
+    valid = _write_test_jsonl([{"text": "hello", "tools": []}])
+    bad = tempfile.mkdtemp()  # a directory path
+    with pytest.raises(SystemExit) as exc:
+        main(["run", "--pre", bad, "--post", valid])
+    assert exc.value.code == 1
+    assert "cannot read" in capsys.readouterr().err
+
+
+def test_run_warns_on_missing_text_field(capsys):
+    # Records exist but lack the requested text field → warn instead of silently
+    # producing zero drift.
+    pre = _write_test_jsonl([{"content": "a"}, {"content": "b"}])
+    post = _write_test_jsonl([{"content": "c"}, {"content": "d"}])
+    main(["run", "--pre", pre, "--post", post])
+    assert "no records contain the 'text' field" in capsys.readouterr().err
