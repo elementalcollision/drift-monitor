@@ -5,6 +5,7 @@ This is an independent implementation — no code was copied from the original.
 See: https://morrow.run for the original research toolkit.
 """
 
+from drift_monitor.instruments.base import InstrumentReading, Severity
 from drift_monitor.instruments.ghost_lexicon import GhostLexicon
 from drift_monitor.instruments.behavioral import BehavioralFootprint
 from drift_monitor.instruments.semantic import SemanticDrift
@@ -19,4 +20,6 @@ __all__ = [
     "DriftScorer",
     "DriftReport",
     "CompressionType",
+    "InstrumentReading",
+    "Severity",
 ]
