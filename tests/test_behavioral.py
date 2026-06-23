@@ -77,3 +77,13 @@ def test_score_zero_before_boundary():
     bf = BehavioralFootprint()
     bf.observe("text", {"tools": ["read"]})
     assert bf.score() == 0.0
+
+
+def test_read_empty_details_before_boundary():
+    # Before a boundary, score() is 0.0 — read() must not report fingerprint
+    # metrics (which would show e.g. a spurious length_shift) for a 0.0 score.
+    bf = BehavioralFootprint()
+    bf.observe("a long-ish response here", {"tools": ["read"]})
+    reading = bf.read()
+    assert reading.score == 0.0
+    assert reading.details == {}

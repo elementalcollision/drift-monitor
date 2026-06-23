@@ -151,6 +151,18 @@ class BehavioralFootprint(Instrument):
     def read(self) -> InstrumentReading:
         s = self.score()
 
+        # score() returns 0.0 when no valid measurement is possible (no boundary
+        # marked or not enough data). Mirror that guard here so details stay empty
+        # instead of reporting fingerprint metrics (e.g. a spurious length_shift)
+        # computed over a window that never crossed a boundary.
+        if not self.windows.boundary_marked or not self.windows.has_enough_data(1):
+            return InstrumentReading(
+                instrument=self.name,
+                score=s,
+                severity=self._classify(s),
+                details={},
+            )
+
         anchor_fp = _compute_fingerprint(
             self.windows.anchor.texts,
             [o.metadata for o in self.windows.anchor.observations],
