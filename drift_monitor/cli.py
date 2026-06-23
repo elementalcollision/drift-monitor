@@ -19,6 +19,21 @@ from drift_monitor.simulate import (
 )
 
 
+def _read_records_or_exit(path: str) -> list[dict]:
+    """Read JSONL records, exiting cleanly on an I/O error.
+
+    ``read_jsonl`` returns ``[]`` for a MISSING file; this wrapper additionally
+    turns an existing-but-unreadable path (PermissionError, a directory, or any
+    other OSError) into a friendly stderr message + ``exit(1)`` instead of an
+    uncaught traceback — matching the CLI's existing error-handling style.
+    """
+    try:
+        return read_jsonl(path)
+    except OSError as e:
+        print(f"Error: cannot read {path}: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 def _load_and_run(
     pre_path: str,
     post_path: str,
@@ -26,8 +41,8 @@ def _load_and_run(
     tools_field: str = "tools",
 ) -> dict:
     """Load JSONL files and run all instruments."""
-    pre_records = read_jsonl(pre_path)
-    post_records = read_jsonl(post_path)
+    pre_records = _read_records_or_exit(pre_path)
+    post_records = _read_records_or_exit(post_path)
 
     if not pre_records:
         print(f"Error: no records in {pre_path}", file=sys.stderr)
@@ -35,6 +50,15 @@ def _load_and_run(
     if not post_records:
         print(f"Error: no records in {post_path}", file=sys.stderr)
         sys.exit(1)
+
+    # Warn (don't fail) when the requested text field is absent everywhere — a
+    # wrong --text-field would otherwise silently yield empty text and zero drift.
+    if not any(text_field in r for r in pre_records + post_records):
+        print(
+            f"Warning: no records contain the '{text_field}' field "
+            f"(set --text-field?); treating text as empty.",
+            file=sys.stderr,
+        )
 
     instruments = [
         GhostLexicon(),
@@ -67,8 +91,8 @@ def cmd_run(args: argparse.Namespace) -> None:
 
 def cmd_ghost_lexicon(args: argparse.Namespace) -> None:
     """Run ghost lexicon instrument only."""
-    pre_records = read_jsonl(args.pre)
-    post_records = read_jsonl(args.post)
+    pre_records = _read_records_or_exit(args.pre)
+    post_records = _read_records_or_exit(args.post)
 
     gl = GhostLexicon()
     for r in pre_records:
@@ -83,8 +107,8 @@ def cmd_ghost_lexicon(args: argparse.Namespace) -> None:
 
 def cmd_behavioral(args: argparse.Namespace) -> None:
     """Run behavioral footprint instrument only."""
-    pre_records = read_jsonl(args.pre)
-    post_records = read_jsonl(args.post)
+    pre_records = _read_records_or_exit(args.pre)
+    post_records = _read_records_or_exit(args.post)
 
     bf = BehavioralFootprint()
     for r in pre_records:
@@ -99,8 +123,8 @@ def cmd_behavioral(args: argparse.Namespace) -> None:
 
 def cmd_semantic(args: argparse.Namespace) -> None:
     """Run semantic drift instrument only."""
-    pre_records = read_jsonl(args.pre)
-    post_records = read_jsonl(args.post)
+    pre_records = _read_records_or_exit(args.pre)
+    post_records = _read_records_or_exit(args.post)
 
     sd = SemanticDrift(use_embeddings=False)
     for r in pre_records:
