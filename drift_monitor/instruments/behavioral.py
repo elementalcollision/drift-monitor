@@ -11,7 +11,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
-from drift_monitor.instruments.base import Instrument, InstrumentReading, Severity
+from drift_monitor.instruments.base import Instrument, InstrumentReading
 from drift_monitor.window import DualWindow
 
 
@@ -44,7 +44,7 @@ def _compute_fingerprint(
     # Response lengths
     lengths = [len(t) for t in texts]
     avg_len = sum(lengths) / len(lengths)
-    variance = sum((l - avg_len) ** 2 for l in lengths) / len(lengths)
+    variance = sum((n - avg_len) ** 2 for n in lengths) / len(lengths)
     std_len = math.sqrt(variance)
 
     # Tool distribution from metadata

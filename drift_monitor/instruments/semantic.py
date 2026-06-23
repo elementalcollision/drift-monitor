@@ -13,7 +13,7 @@ import math
 from collections import Counter
 from typing import Any
 
-from drift_monitor.instruments.base import Instrument, InstrumentReading, Severity
+from drift_monitor.instruments.base import Instrument, InstrumentReading
 from drift_monitor.instruments.ghost_lexicon import tokenize, _STOP_WORDS
 from drift_monitor.window import DualWindow
 
