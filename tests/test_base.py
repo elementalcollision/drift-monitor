@@ -179,3 +179,17 @@ def test_severity_from_string():
     assert Severity("low") is Severity.LOW
     assert Severity("moderate") is Severity.MODERATE
     assert Severity("high") is Severity.HIGH
+
+
+def test_core_types_exported_from_package():
+    # Severity and InstrumentReading are part of the public surface (a
+    # DriftReport carries both) — they should import from the top-level package
+    # and be the same objects as in instruments.base.
+    import drift_monitor
+    from drift_monitor import InstrumentReading as PkgReading
+    from drift_monitor import Severity as PkgSeverity
+
+    assert PkgSeverity is Severity
+    assert PkgReading is InstrumentReading
+    assert "Severity" in drift_monitor.__all__
+    assert "InstrumentReading" in drift_monitor.__all__
