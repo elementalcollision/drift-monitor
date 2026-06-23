@@ -49,21 +49,28 @@ pip install git+https://github.com/elementalcollision/drift-monitor.git
 ```python
 from drift_monitor import GhostLexicon, BehavioralFootprint, SemanticDrift, DriftScorer
 
-scorer = DriftScorer()
+# One instrument per drift dimension; all share the same observe / mark_boundary protocol.
+instruments = [GhostLexicon(), BehavioralFootprint(), SemanticDrift(use_embeddings=False)]
 
-# Feed pre-compression observations (anchor window)
+# Feed pre-compression observations (anchor window).
+# Pass tool names under the "tools" key; Ghost Lexicon / Semantic ignore metadata.
 for text in pre_compression_outputs:
-    scorer.observe(text, metadata={"tools_used": ["search", "code"]})
+    for instr in instruments:
+        instr.observe(text, {"tools": ["search", "code"]})
 
-scorer.mark_boundary()  # Context was compressed here
+# Mark the compression boundary on every instrument.
+for instr in instruments:
+    instr.mark_boundary()
 
 # Feed post-compression observations (recent window)
 for text in post_compression_outputs:
-    scorer.observe(text, metadata={"tools_used": ["search"]})
+    for instr in instruments:
+        instr.observe(text, {"tools": ["search"]})
 
-report = scorer.score()
-print(f"Drift: {report.composite:.3f} ({report.compression_type.name})")
-# Drift: 0.467 (FULL_BOUNDARY)
+# Combine the per-instrument readings into a composite report.
+report = DriftScorer().score([instr.read() for instr in instruments])
+print(f"Drift: {report.composite_score:.3f} ({report.compression_type.name})")
+# e.g. Drift: 0.467 (FULL_BOUNDARY)
 ```
 
 ## Instruments
@@ -110,16 +117,18 @@ graph LR
     end
 
     GL -->|fired alone| VOC["VOCABULARY_ONLY -- Surface-level compression"]
-    BF -->|fired alone| OPS["OPERATIONAL -- Tool behavior changed"]
+    BF -->|fired alone| INFRA["INFRASTRUCTURE -- Behavioral change, maybe model swap"]
     SD -->|fired alone| SEM["SEMANTIC_ONLY -- Topic shift"]
 
-    GL & BF -->|both fired| INFRA["INFRASTRUCTURE -- Systemic change"]
+    GL & BF -->|both fired| OPS["OPERATIONAL -- Vocabulary + tool-use shifted"]
+    GL & SD -->|both fired| GS["GHOST_SEMANTIC -- Vocab loss + topic shift"]
     GL & BF & SD -->|all fired| FULL["FULL_BOUNDARY -- Complete drift event"]
 
     style FULL fill:#f8d7da
     style VOC fill:#fff3cd
     style OPS fill:#fff3cd
     style SEM fill:#d4edda
+    style GS fill:#fff3cd
     style INFRA fill:#f8d7da
 ```
 
@@ -127,9 +136,10 @@ graph LR
 |------|------------------|---------|
 | `NONE` | None | No drift detected |
 | `VOCABULARY_ONLY` | Ghost Lexicon only | Surface compression, behavior intact |
-| `OPERATIONAL` | Behavioral only | Tool preferences shifted |
 | `SEMANTIC_ONLY` | Semantic only | Topic changed, vocabulary intact |
-| `INFRASTRUCTURE` | Ghost Lexicon + Behavioral | Systemic context loss |
+| `INFRASTRUCTURE` | Behavioral only | Behavioral change, possibly a model swap |
+| `OPERATIONAL` | Ghost Lexicon + Behavioral | Vocabulary + tool-use shifted, meaning stable |
+| `GHOST_SEMANTIC` | Ghost Lexicon + Semantic | Vocabulary loss + topic shift, behavior stable |
 | `FULL_BOUNDARY` | All three | Major compression boundary crossed |
 
 ## Scoring
