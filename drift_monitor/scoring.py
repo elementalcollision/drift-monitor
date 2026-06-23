@@ -22,6 +22,7 @@ class CompressionType(Enum):
     FULL_BOUNDARY = "full_boundary"  # All three fire
     INFRASTRUCTURE = "infrastructure"  # Behavioral leads, may be model swap
     SEMANTIC_ONLY = "semantic_only"  # Only semantic fires (topic shift)
+    GHOST_SEMANTIC = "ghost_semantic"  # Ghost + semantic, behavioral stable (vocab loss + topic shift)
 
 
 @dataclass
@@ -82,7 +83,10 @@ class DriftScorer:
             total_weight += w
 
         composite = weighted_sum / total_weight if total_weight > 0 else 0.0
-        composite = min(1.0, composite)
+        # Clamp to the documented [0.0, 1.0] range (InstrumentReading.score
+        # contract). Individual instruments stay in range, but custom weights or
+        # an out-of-contract reading must not produce a score outside [0, 1].
+        composite = max(0.0, min(1.0, composite))
 
         # Classify compression type based on firing pattern
         compression_type = self._classify_compression(readings)
@@ -143,5 +147,13 @@ class DriftScorer:
         if has_semantic and not has_ghost and not has_behavioral:
             return CompressionType.SEMANTIC_ONLY
 
-        # Fallback for unusual combinations
+        if has_ghost and has_semantic and not has_behavioral:
+            # Vocabulary loss + topic shift, behaviour stable — NOT a full
+            # boundary (behavioral did not fire). Previously this combination
+            # fell through to the FULL_BOUNDARY fallback and was mislabelled as
+            # "all three fired".
+            return CompressionType.GHOST_SEMANTIC
+
+        # Defensive fallback: with the cases above, every combination of the
+        # three booleans is now handled, so this is unreachable.
         return CompressionType.FULL_BOUNDARY
