@@ -77,6 +77,29 @@ def test_semantic_only():
     assert report.compression_type == CompressionType.SEMANTIC_ONLY
 
 
+def test_ghost_semantic():
+    # Ghost + semantic fire but behavioral stays stable — must NOT be labelled
+    # FULL_BOUNDARY (only two instruments fired).
+    scorer = DriftScorer()
+    report = scorer.score([
+        _reading("ghost_lexicon", 0.5),
+        _reading("behavioral_footprint", 0.02),
+        _reading("semantic_drift", 0.4),
+    ])
+    assert report.compression_type == CompressionType.GHOST_SEMANTIC
+
+
+def test_composite_clamped_to_unit_interval():
+    # Out-of-contract negative reading scores must not yield a negative composite.
+    scorer = DriftScorer()
+    report = scorer.score([
+        _reading("ghost_lexicon", -0.5),
+        _reading("behavioral_footprint", -0.3),
+        _reading("semantic_drift", -0.2),
+    ])
+    assert report.composite_score == 0.0
+
+
 def test_empty_readings():
     scorer = DriftScorer()
     report = scorer.score([])
