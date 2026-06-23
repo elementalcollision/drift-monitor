@@ -184,8 +184,6 @@ def generate_drift_pair(
     Returns (pre_records, post_records) where each record has "text" and
     optional "tools" metadata.
     """
-    rng = random.Random(seed)
-
     # Build pre-compression records
     pre_texts = SAMPLE_PRE_RESPONSES[:n_samples]
     pre_tools = TOOL_SETS["pre"]

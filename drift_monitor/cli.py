@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from pathlib import Path
 
 from drift_monitor.instruments.ghost_lexicon import GhostLexicon
 from drift_monitor.instruments.behavioral import BehavioralFootprint

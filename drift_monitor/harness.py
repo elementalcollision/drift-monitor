@@ -22,18 +22,15 @@ Usage:
 from __future__ import annotations
 
 import json
-import os
-import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 from drift_monitor.instruments.ghost_lexicon import GhostLexicon
 from drift_monitor.instruments.behavioral import BehavioralFootprint
 from drift_monitor.instruments.semantic import SemanticDrift
-from drift_monitor.scoring import DriftScorer, DriftReport, CompressionType
-from drift_monitor.instruments.base import Severity
+from drift_monitor.scoring import DriftScorer, DriftReport
 from drift_monitor.storage import append_jsonl
 
 
@@ -248,7 +245,6 @@ class DriftHarness:
         if report.composite_score >= self.config.composite_nudge_threshold:
             dominant = self._dominant_strategy()
             lost = ghost_reading.details.get("lost_terms", [])[:5] if ghost_reading else []
-            alt_categories = [c for c in _CATEGORY_SUGGESTIONS if c != dominant["category"]]
             suggestion = _CATEGORY_SUGGESTIONS.get(
                 dominant["category"],
                 "a fundamentally different approach",

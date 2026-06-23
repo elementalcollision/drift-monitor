@@ -10,7 +10,7 @@ import re
 from collections import Counter
 from typing import Any
 
-from drift_monitor.instruments.base import Instrument, InstrumentReading, Severity
+from drift_monitor.instruments.base import Instrument, InstrumentReading
 from drift_monitor.window import DualWindow
 
 # Match word tokens, including hyphenated compounds
@@ -194,14 +194,9 @@ class GhostLexicon(Instrument):
         if not anchor_vocab:
             return 0.0
 
-        recent_vocab = extract_specialized_vocab(
-            self.windows.recent.texts,
-            min_freq=1,  # Lower threshold for recent — we're checking presence
-            min_length=self.min_length,
-        )
-
-        # Also check raw token presence in recent texts for terms that
-        # may appear once (below specialized threshold)
+        # Decay is measured against RAW token presence in the recent window (a
+        # term counts as retained if it appears at all, even below the
+        # specialized-vocab threshold), so no specialized recent-vocab set is needed.
         recent_all_tokens = set()
         for text in self.windows.recent.texts:
             recent_all_tokens.update(tokenize(text))
