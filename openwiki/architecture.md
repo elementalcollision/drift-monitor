@@ -1,3 +1,11 @@
+---
+type: "Reference"
+title: "Architecture"
+description: "Core architecture of drift-monitor — the dual-window system, instrument base class, weighted composite scoring, and compression-type classification from instrument firing patterns."
+tags: [architecture, scoring, compression-type, dual-window]
+generated: { by: "openwiki/0.7.2", at: "2026-10-19T08:52:43.736Z" }
+---
+
 # Architecture
 
 This page covers the core architecture of drift-monitor: the dual-window system, instrument base class, composite scoring, and compression-type classification.
@@ -141,9 +149,9 @@ fired = {r.instrument for r in readings if r.severity != Severity.LOW}
 | Ghost + Behavioral (no Semantic) | `OPERATIONAL` |
 | Ghost only (no Behavioral, no Semantic) | `VOCABULARY_ONLY` |
 | Semantic only (no Ghost, no Behavioral) | `SEMANTIC_ONLY` |
-| Any other combination | `FULL_BOUNDARY` (fallback) |
+| Ghost + Semantic (no Behavioral) | `GHOST_SEMANTIC` |
 
-> **Note:** The README's classification table says `OPERATIONAL` = "Ghost Lexicon + Behavioral," but the source code in `_classify_compression()` also requires Semantic to *not* fire for `OPERATIONAL`. If all three fire, it's `FULL_BOUNDARY`. See `drift_monitor/scoring.py` lines 113–147.
+`_classify_compression()` in `drift_monitor/scoring.py` now handles every combination of the three firing booleans explicitly, so the `FULL_BOUNDARY` fallback is unreachable for the default trio. `GHOST_SEMANTIC` (vocabulary loss + topic shift, behavior stable) was added to stop that combination falling through to the `FULL_BOUNDARY` fallback, where it was previously mislabelled as "all three fired."
 
 ## DriftReport
 
@@ -168,8 +176,20 @@ class DriftReport:
 The package exports:
 
 ```python
-from drift_monitor import GhostLexicon, BehavioralFootprint, SemanticDrift, DriftScorer, DriftReport, CompressionType
+from drift_monitor import (
+    DriftMonitor,
+    GhostLexicon, BehavioralFootprint, SemanticDrift, HedgingLanguage,
+    DriftScorer, DriftReport, CompressionType,
+    InstrumentReading, Severity,
+    SignificanceResult, permutation_test, monitor_significance,
+    STATE_SCHEMA_VERSION, StateVersionError, EventLog,
+    read_events, replay_events, register_migration,
+    Alert, WebhookHook,
+    SegmentHistory,
+)
 ```
+
+`DriftMonitor` (the facade) bundles only the three surface instruments by default; `HedgingLanguage` is exported but is **not** part of `DriftMonitor`'s instrument set. `__version__` is `"0.1.0"`.
 
 ## Where to Start When Modifying
 

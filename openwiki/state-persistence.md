@@ -1,3 +1,11 @@
+---
+type: "Reference"
+title: "State Persistence"
+description: "Snapshot + append-only event-tail persistence for DriftMonitor and DriftHarness — the to_state/from_state API, schema versioning, migration registry, and crash recovery."
+tags: [persistence, state, snapshot, event-tail, schema-versioning]
+generated: { by: "openwiki/0.7.2", at: "2026-10-19T08:52:43.736Z" }
+---
+
 # State Persistence
 
 **Status:** Accepted (Phase 2)
@@ -14,6 +22,7 @@
 
 Everything is versioned behind a `schema_version` field, which both *conditions* how
 state is deserialized and *prevents* silent drift between writer and reader (see
+<!-- openwiki: broken internal link [#versioning] heading anchor "versioning" does not exist in /openwiki/state-persistence.md. Fix the href or restore the target, then delete this comment. -->
 [Versioning](#versioning)).
 
 ## Two artefacts

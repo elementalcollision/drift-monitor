@@ -1,3 +1,11 @@
+---
+type: "Reference"
+title: "drift-monitor — OpenWiki Quickstart"
+description: "Quickstart for drift-monitor — install, the DriftMonitor facade, the live DriftHarness loop, the CLI, the three instruments, and compression-type classification."
+tags: [quickstart, drift-monitor, getting-started]
+generated: { by: "openwiki/0.7.2", at: "2026-10-19T08:52:43.736Z" }
+---
+
 # drift-monitor — OpenWiki Quickstart
 
 **Behavioral drift detection for AI agents across context compression boundaries.**
@@ -125,4 +133,5 @@ A **DriftScorer** combines readings into a composite score (0.0–1.0) and class
 - [Harness & Live Monitoring](harness.md) — DriftHarness for experiment loops, DriftConfig, nudge system, strategy classification, and TSV analysis.
 - [CLI & Testing](cli-and-testing.md) — CLI commands, JSONL storage layer, synthetic drift simulation, test suite, and validation data.
 - [State Persistence](state-persistence.md) — snapshot + event-tail persistence, `to_state`/`from_state` API, and the schema-versioning/migration strategy.
+- [Multi-Segment History](multi-segment.md) — `SegmentHistory` for tracking drift across many compression boundaries and its trend.
 - [Multi-Segment History](multi-segment.md) — `SegmentHistory` for tracking drift across many compression boundaries and its trend.

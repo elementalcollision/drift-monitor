@@ -1,3 +1,10 @@
+---
+type: "Reference"
+title: "Multi-Segment History"
+description: "SegmentHistory — a purely-additive layer over DualWindow that tracks drift across many compression boundaries and exposes the per-boundary trend."
+tags: [history, multi-segment, trend, persistence]
+---
+
 # Multi-Segment History
 
 **Status:** Accepted (Phase 5)
