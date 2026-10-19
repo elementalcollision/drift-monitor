@@ -8,7 +8,6 @@ from drift_monitor.simulate import (
     generate_drift_pair,
     validate_instruments,
     SAMPLE_PRE_RESPONSES,
-    TECHNICAL_TERMS,
 )
 
 
@@ -62,8 +61,12 @@ def test_validate_instruments_runs():
     assert "framing" in results
     assert "combined" in results
 
-    # Framing drift should be mostly invisible
+    # Framing drift must stay invisible to the SURFACE trio. The hedging
+    # instrument is expected to catch framing's hedging qualifiers ("must"
+    # → "could potentially" etc.), which narrows the invisibility claim.
     for instr_name, stats in results["framing"].items():
+        if instr_name == "hedging_language":
+            continue
         assert stats["mean_score"] < 0.3, (
             f"{instr_name} detected framing drift (score={stats['mean_score']:.2f})"
         )

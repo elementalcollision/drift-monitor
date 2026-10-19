@@ -2,12 +2,10 @@
 
 import json
 import tempfile
-from pathlib import Path
 
 import pytest
 
 from drift_monitor.cli import main
-from drift_monitor.storage import write_jsonl
 
 
 def _write_test_jsonl(records: list[dict]) -> str:

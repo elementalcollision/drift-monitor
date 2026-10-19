@@ -64,6 +64,34 @@ wrapped = harness.wrap(original_callbacks)
 - `experiment_count: int` — total experiments observed (excluding baseline).
 - `boundary_set: bool` — whether the anchor window is full and boundary has been marked.
 
+### Alerting hooks (opt-in)
+
+Out-of-band counterpart to `get_drift_nudge()` (which injects a prompt-nudge string).
+Register callbacks to be notified when a drift score crosses its threshold.
+Dispatch is **edge-triggered**: a hook fires once when a score crosses *above* its
+threshold, and re-arms only after it drops back below — one alert per drift episode.
+
+```python
+from drift_monitor import Alert, WebhookHook
+from drift_monitor.harness import DriftHarness
+
+harness = DriftHarness(results_dir=".")
+harness.add_alert_hook(lambda alert: print(alert.type, alert.message))
+harness.add_alert_hook(WebhookHook("https://hooks.example/drift"))
+```
+
+- `add_alert_hook(hook)` / `remove_alert_hook(hook)` / `clear_alert_hooks()`.
+- A hook is any `(Alert) -> Any` callable (`AlertHook`); `WebhookHook` is an adapter
+  that POSTs the alert as JSON (stdlib-only, no extra dependency).
+- `Alert` carries `type` (`"composite"` / `"vocabulary"` / `"behavioral"`), `severity`,
+  `composite_score`, `message`, `experiment_count`, a UTC `timestamp`, and the full
+  serialized `report` — so a consumer can inspect every instrument reading without a
+  second call.
+- The three alert types reuse the same thresholds as `get_drift_nudge()`
+  (`composite_nudge_threshold`, `ghost_nudge_threshold`, `behavioral_nudge_threshold`).
+- Hooks run synchronously during `_run_assessment()`; a raising hook is isolated so it
+  never breaks the experiment loop. See `drift_monitor/alerts.py`.
+
 ## Strategy Classification
 
 **Function:** `classify_strategy(description: str) → str`

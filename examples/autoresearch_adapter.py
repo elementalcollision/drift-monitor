@@ -241,7 +241,7 @@ def print_sliding(results: list[dict[str, Any]]) -> None:
         )
 
     # Show vocabulary loss progression
-    print(f"\n  Vocabulary loss over time:")
+    print("\n  Vocabulary loss over time:")
     for r in results:
         if r.get("lost_terms"):
             print(f"    {r['window']}: -{len(r['lost_terms'])} terms: {', '.join(r['lost_terms'][:5])}")

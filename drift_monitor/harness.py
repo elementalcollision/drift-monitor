@@ -22,6 +22,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -30,8 +31,17 @@ from typing import Any, Protocol
 from drift_monitor.instruments.ghost_lexicon import GhostLexicon
 from drift_monitor.instruments.behavioral import BehavioralFootprint
 from drift_monitor.instruments.semantic import SemanticDrift
+from drift_monitor.alerts import Alert, AlertHook
+from drift_monitor.persistence import (
+    STATE_SCHEMA_VERSION,
+    EventLog,
+    instrument_from_state,
+    migrate_state,
+)
 from drift_monitor.scoring import DriftScorer, DriftReport
 from drift_monitor.storage import append_jsonl
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -91,6 +101,11 @@ class DriftConfig:
     # Output
     output_filename: str = "drift_readings.jsonl"
     status_filename: str = ".drift_status.json"
+
+    # Event tail (append-only audit + crash recovery). ``None`` disables it.
+    # When set, every observation and boundary is appended so state can be
+    # reconstructed past the last snapshot (see DriftHarness.restore).
+    event_log_path: str | None = None
 
     # Scoring weights
     weights: dict[str, float] = field(default_factory=lambda: {
@@ -179,6 +194,18 @@ class DriftHarness:
         self._readings_path = self.results_dir / self.config.output_filename
         self._status_path = self.results_dir / self.config.status_filename
 
+        # Optional append-only event tail (audit + crash recovery)
+        self._event_log: EventLog | None = None
+        if self.config.event_log_path:
+            ep = Path(self.config.event_log_path)
+            if not ep.is_absolute():
+                ep = self.results_dir / ep
+            self._event_log = EventLog(ep)
+
+        # Alert hooks (opt-in, out-of-band notifications)
+        self._alert_hooks: list[AlertHook] = []
+        self._alert_firing: dict[str, bool] = {}  # per alert type, edge-trigger state
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -199,9 +226,7 @@ class DriftHarness:
             not self._boundary_set
             and self._experiment_count >= self.config.anchor_window
         ):
-            self._ghost.mark_boundary()
-            self._behavioral.mark_boundary()
-            self._semantic.mark_boundary()
+            self.mark_boundary()
             self._boundary_set = True
 
         # Build observation text and metadata
@@ -215,9 +240,7 @@ class DriftHarness:
             "status": result.status,
         }
 
-        self._ghost.observe(text, metadata)
-        self._behavioral.observe(text, metadata)
-        self._semantic.observe(text, metadata)
+        self.observe(text, metadata)
 
         # Run assessment at intervals (after boundary is set)
         if (
@@ -225,6 +248,59 @@ class DriftHarness:
             and self._experiment_count % self.config.assessment_interval == 0
         ):
             self._run_assessment()
+
+    def observe(self, text: str, metadata: dict[str, Any] | None = None) -> None:
+        """Feed one observation to all instruments (primitive API).
+
+        The event-tail primitive; also used internally by ``observe_experiment``.
+        When an event log is configured, the observation is appended to it.
+        """
+        self._ghost.observe(text, metadata)
+        self._behavioral.observe(text, metadata)
+        self._semantic.observe(text, metadata)
+        if self._event_log is not None:
+            self._event_log.observe(text, metadata)
+
+    def mark_boundary(self) -> None:
+        """Mark the compression boundary on all instruments (primitive API)."""
+        self._ghost.mark_boundary()
+        self._behavioral.mark_boundary()
+        self._semantic.mark_boundary()
+        if self._event_log is not None:
+            self._event_log.mark_boundary()
+
+    def reset(self) -> None:
+        """Reset all instruments and bookkeeping to a clean state."""
+        self._ghost.reset()
+        self._behavioral.reset()
+        self._semantic.reset()
+        self._experiment_count = 0
+        self._boundary_set = False
+        self._strategy_history = []
+        self._last_report = None
+        self._alert_firing = {}
+        if self._event_log is not None:
+            self._event_log.reset()
+
+    def add_alert_hook(self, hook: AlertHook) -> None:
+        """Register a callback to receive drift :class:`Alert` objects.
+
+        ``hook`` is any ``(Alert) -> Any`` callable (a plain function or a
+        :class:`WebhookHook`). Alerts are edge-triggered: a hook fires once when
+        a score crosses above its threshold, and only fires again after the
+        score drops back below. Hooks run synchronously during assessment; a
+        raising hook is isolated so it does not stop the experiment loop.
+        """
+        self._alert_hooks.append(hook)
+
+    def remove_alert_hook(self, hook: AlertHook) -> None:
+        """Remove a previously registered alert hook (no-op if not present)."""
+        if hook in self._alert_hooks:
+            self._alert_hooks.remove(hook)
+
+    def clear_alert_hooks(self) -> None:
+        """Remove every registered alert hook."""
+        self._alert_hooks.clear()
 
     def get_drift_nudge(self) -> str | None:
         """Get a nudge message if drift thresholds are exceeded.
@@ -340,10 +416,13 @@ class DriftHarness:
         ]
         self._last_report = self._scorer.score(readings)
 
+        # Dispatch any newly-crossed drift thresholds to alert hooks.
+        self._dispatch_alerts()
+
         # Write to JSONL
         record = {
             "experiment_count": self._experiment_count,
-            "timestamp": time.time(),
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             **self._last_report.to_dict(),
             "strategy_distribution": self._strategy_distribution(),
         }
@@ -357,7 +436,7 @@ class DriftHarness:
             "severity": self._last_report.severity.value,
             "nudge_active": self._last_report.composite_score >= self.config.composite_nudge_threshold,
             "strategy_distribution": self._strategy_distribution(),
-            "updated": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "updated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
         try:
             from drift_monitor.storage import atomic_write
@@ -366,7 +445,78 @@ class DriftHarness:
                 json.dumps(status, indent=2) + "\n",
             )
         except Exception:
-            pass  # Non-critical
+            # Non-critical for the experiment loop, but a stale status file
+            # looks identical to a live one — surface it so consumers of the
+            # status file can distinguish a dead monitor from a quiet one.
+            logger.warning(
+                "Failed to write drift status file %s; status may be stale",
+                self._status_path,
+                exc_info=True,
+            )
+
+    def _dispatch_alerts(self) -> None:
+        """Dispatch edge-triggered alerts for thresholds newly crossed.
+
+        For each alert type (composite / vocabulary / behavioral), fire when the
+        score crosses *above* its threshold from below, and re-arm when it drops
+        back below — one alert per drift episode. A raising hook is isolated so a
+        bad webhook never breaks the assessment loop.
+        """
+        if not self._alert_hooks or self._last_report is None:
+            return
+
+        report = self._last_report
+        readings = {r.instrument: r for r in report.readings}
+        ghost = readings.get("ghost_lexicon")
+        behavioral = readings.get("behavioral_footprint")
+
+        candidates = [
+            (
+                "composite",
+                report.composite_score >= self.config.composite_nudge_threshold,
+                report.severity,
+                f"Full drift detected (composite={report.composite_score:.2f})",
+            ),
+            (
+                "vocabulary",
+                ghost is not None and ghost.score >= self.config.ghost_nudge_threshold,
+                ghost.severity if ghost else None,
+                f"Vocabulary narrowing detected (ghost_lexicon={ghost.score:.2f})"
+                if ghost
+                else "Vocabulary narrowing detected",
+            ),
+            (
+                "behavioral",
+                behavioral is not None
+                and behavioral.score >= self.config.behavioral_nudge_threshold,
+                behavioral.severity if behavioral else None,
+                f"Strategy collapse detected (behavioral_footprint={behavioral.score:.2f})"
+                if behavioral
+                else "Strategy collapse detected",
+            ),
+        ]
+
+        for alert_type, active, severity, message in candidates:
+            was_firing = self._alert_firing.get(alert_type, False)
+            if active and not was_firing:
+                self._alert_firing[alert_type] = True
+                alert = Alert(
+                    type=alert_type,
+                    severity=severity,
+                    composite_score=report.composite_score,
+                    message=message,
+                    experiment_count=self._experiment_count,
+                    report=report.to_dict(),
+                )
+                for hook in list(self._alert_hooks):
+                    try:
+                        hook(alert)
+                    except Exception:
+                        logger.exception(
+                            "alert hook %r failed handling %r", hook, alert_type
+                        )
+            elif not active and was_firing:
+                self._alert_firing[alert_type] = False
 
     def _strategy_distribution(self) -> dict[str, float]:
         """Current strategy category distribution."""
@@ -406,6 +556,119 @@ class DriftHarness:
                 elif any(w in t for w in ["batch", "gradient"]):
                     categories.add("batch_size")
         return sorted(categories)
+
+    # ------------------------------------------------------------------
+    # State persistence (see drift_monitor.persistence for the contract)
+    # ------------------------------------------------------------------
+
+    def to_state(self) -> dict[str, Any]:
+        """Serialize the harness's full state to a plain, versioned dict.
+
+        Captures the three instruments, the scorer weights, and the harness-level
+        bookkeeping (experiment count, boundary flag, strategy history). When an
+        event log is attached, ``last_event_seq`` records how much of it this
+        snapshot already reflects.
+        """
+        state = {
+            "schema_version": STATE_SCHEMA_VERSION,
+            "experiment_count": self._experiment_count,
+            "boundary_set": self._boundary_set,
+            "strategy_history": list(self._strategy_history),
+            "instruments": [
+                self._ghost.to_state(),
+                self._behavioral.to_state(),
+                self._semantic.to_state(),
+            ],
+            "weights": dict(self._scorer.weights),
+        }
+        if self._event_log is not None:
+            state["last_event_seq"] = self._event_log.next_seq - 1
+        return state
+
+    @classmethod
+    def from_state(
+        cls,
+        state: dict[str, Any],
+        *,
+        results_dir: str = ".",
+        config: DriftConfig | None = None,
+    ) -> "DriftHarness":
+        """Reconstruct a harness from a ``to_state()`` dict.
+
+        ``results_dir`` and ``config`` are deployment configuration (output
+        paths, thresholds, window sizes) — not drift state — so they are supplied
+        on restart rather than persisted. Instruments, weights, and bookkeeping
+        counters are restored from ``state``.
+        """
+        state = migrate_state(state)
+        harness = cls(results_dir=results_dir, config=config)
+        by_name = {
+            i.name: i for i in (instrument_from_state(s) for s in state["instruments"])
+        }
+        harness._ghost = by_name["ghost_lexicon"]
+        harness._behavioral = by_name["behavioral_footprint"]
+        harness._semantic = by_name["semantic_drift"]
+        harness._experiment_count = int(state.get("experiment_count", 0))
+        harness._boundary_set = bool(state.get("boundary_set", False))
+        harness._strategy_history = list(state.get("strategy_history", []))
+        weights = state.get("weights")
+        if weights is not None:
+            harness._scorer = DriftScorer(weights=weights)
+        return harness
+
+    def save_state(self, path: str | Path) -> None:
+        """Write a versioned snapshot of this harness's state atomically."""
+        from drift_monitor.persistence import save_state as _save_state
+
+        _save_state(self.to_state(), path)
+
+    @classmethod
+    def restore(
+        cls,
+        snapshot_path: str | Path,
+        *,
+        results_dir: str = ".",
+        config: DriftConfig | None = None,
+        event_log_path: str | Path | None = None,
+    ) -> "DriftHarness":
+        """Reconstruct a harness from a snapshot, fast-forwarding any event tail.
+
+        Loads the snapshot (full state), then replays events whose ``seq`` exceeds
+        the snapshot's ``last_event_seq`` to recover observations logged after the
+        snapshot. Both the instrument windows *and* the harness bookkeeping
+        counters (``experiment_count``, ``strategy_history``) are recovered: the
+        counters are recomputed from the replayed ``observe`` events, since every
+        non-baseline experiment emits exactly one such event and its ``tools``
+        metadata records the strategy category. The event log is detached during
+        replay so recovered events are not re-appended to the very log being read.
+        """
+        from drift_monitor.persistence import load_state, read_events, replay_events
+
+        state = load_state(snapshot_path)
+        harness = cls.from_state(state, results_dir=results_dir, config=config)
+        if event_log_path is not None:
+            harness._event_log = None  # don't re-append while replaying
+            events = read_events(event_log_path)
+            last_seq = state.get("last_event_seq", -1)
+            replay_events(harness, events, last_seq=last_seq)
+
+            # Recover the bookkeeping counters from the replayed tail.
+            tail_observes = [
+                e
+                for e in events
+                if e.get("seq", -1) > last_seq and e.get("type") == "observe"
+            ]
+            harness._experiment_count += len(tail_observes)
+            for event in tail_observes:
+                tools = event.get("metadata", {}).get("tools", [])
+                if tools:
+                    harness._strategy_history.append(tools[0])
+
+            ep = Path(event_log_path)
+            if not ep.is_absolute():
+                ep = Path(results_dir) / ep
+            harness._event_log = EventLog(ep)
+        return harness
 
 
 # ---------------------------------------------------------------------------

@@ -5,12 +5,21 @@ to analyze them.
 """
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 from drift_monitor.simulate import DriftMode, generate_drift_pair
+
+
+def _temp_jsonl_path(suffix: str) -> Path:
+    """Create a secure temp file and return its path (file removed)."""
+    fd, name = tempfile.mkstemp(suffix=suffix)
+    os.close(fd)
+    os.unlink(name)
+    return Path(name)
 
 
 def main():
@@ -22,8 +31,8 @@ def main():
     )
 
     # Write to temp JSONL files
-    pre_path = Path(tempfile.mktemp(suffix="_pre.jsonl"))
-    post_path = Path(tempfile.mktemp(suffix="_post.jsonl"))
+    pre_path = _temp_jsonl_path("_pre.jsonl")
+    post_path = _temp_jsonl_path("_post.jsonl")
 
     with open(pre_path, "w") as f:
         for r in pre_records:

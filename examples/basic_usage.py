@@ -63,7 +63,7 @@ print("=== Individual Instruments ===")
 for reading in readings:
     print(f"  {reading.instrument:25s} score={reading.score:.4f}  severity={reading.severity.value}")
 
-print(f"\n=== Composite ===")
+print("\n=== Composite ===")
 print(f"  Score: {report.composite_score:.4f}")
 print(f"  Type:  {report.compression_type.value}")
 print(f"  Fired: {report.fired}")
@@ -71,6 +71,6 @@ print(f"  Fired: {report.fired}")
 # Show ghost lexicon details
 ghost_reading = ghost.read()
 if ghost_reading.details.get("lost_terms"):
-    print(f"\n=== Lost Terms ===")
+    print("\n=== Lost Terms ===")
     for term in ghost_reading.details["lost_terms"]:
         print(f"  - {term}")

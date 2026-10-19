@@ -303,7 +303,7 @@ def main():
 
         # Breakdown by GPU
         gpus = sorted(set(r["gpu"] for r in all_runs))
-        print(f"\nBy GPU:")
+        print("\nBy GPU:")
         for gpu in gpus:
             gpu_runs = [r for r in all_runs if r["gpu"] == gpu]
             avg = sum(r["final_composite"] for r in gpu_runs) / len(gpu_runs)
@@ -311,7 +311,7 @@ def main():
 
         # Breakdown by model
         models = sorted(set(r["model"] for r in all_runs))
-        print(f"\nBy Model:")
+        print("\nBy Model:")
         for model in models:
             model_runs = [r for r in all_runs if r["model"] == model]
             avg = sum(r["final_composite"] for r in model_runs) / len(model_runs)
@@ -319,7 +319,7 @@ def main():
 
         # Breakdown by dataset
         datasets = sorted(set(r["dataset"] for r in all_runs))
-        print(f"\nBy Dataset:")
+        print("\nBy Dataset:")
         for ds in datasets:
             ds_runs = [r for r in all_runs if r["dataset"] == ds]
             avg = sum(r["final_composite"] for r in ds_runs) / len(ds_runs)

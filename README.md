@@ -118,6 +118,21 @@ Measures movement of the conceptual center-of-gravity. Detects when an agent's f
 pip install drift-monitor[embeddings]
 ```
 
+### Hedging Language (opt-in)
+
+Detects erosion of assertive language: "must" becomes "could potentially", "requires" becomes "might benefit from". The three instruments above stay silent on this — vocabulary is preserved and the topic is unchanged — so Hedging Language is a separate, opt-in instrument (`HedgingLanguage()`; also `drift-monitor hedging --pre/--post`). It is one-sided: only an *increase* in hedge density counts as drift. Note that it also catches `FRAMING`-mode reframing when the reframing uses hedging qualifiers.
+
+### Statistical Significance
+
+Composite scores over small windows can be noise. A permutation test reshuffles observations across a sham boundary to ask how often random splits produce drift this strong:
+
+```bash
+# Adds a "significance" block with a p-value to the run output
+drift-monitor run --pre anchor.jsonl --post recent.jsonl --permutations 200
+```
+
+Library: `permutation_test(anchor, recent, n_permutations=200)` or `monitor_significance(monitor)`.
+
 ## Compression Type Classification
 
 Which instruments fire -- and in what combination -- reveals the type of drift:
@@ -255,6 +270,10 @@ drift-monitor run --pre anchor.jsonl --post recent.jsonl
 drift-monitor ghost-lexicon --pre anchor.jsonl --post recent.jsonl
 drift-monitor behavioral --pre anchor.jsonl --post recent.jsonl
 drift-monitor semantic --pre anchor.jsonl --post recent.jsonl
+drift-monitor hedging --pre anchor.jsonl --post recent.jsonl
+
+# Permutation-test p-value for the composite
+drift-monitor run --pre anchor.jsonl --post recent.jsonl --permutations 200
 
 # Interactive demo with synthetic data
 drift-monitor demo
@@ -325,7 +344,7 @@ pip install "drift-monitor[embeddings] @ git+https://github.com/elementalcollisi
 git clone https://github.com/elementalcollision/drift-monitor.git
 cd drift-monitor
 pip install -e ".[dev]"
-pytest tests/ -v  # 60 tests
+pytest tests/ -v
 ```
 
 **Requirements:** Python 3.9+ | Zero required dependencies | Optional: `sentence-transformers` for embedding-based semantic drift

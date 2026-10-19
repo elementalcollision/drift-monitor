@@ -108,3 +108,15 @@ def test_reset_clears_state():
     gl.observe("text")
     gl.reset()
     assert gl.score() == 0.0
+
+
+def test_read_empty_details_before_boundary():
+    # Without a marked boundary, read() must report empty details — not a
+    # spurious lost_count over a window that never crossed a boundary.
+    gl = GhostLexicon()
+    t = "The idempotent retry handler uses memoization to cache previous results."
+    gl.observe(t)
+    gl.observe(t)  # reaches min_freq, so vocab would exist if we measured
+    reading = gl.read()
+    assert reading.score == 0.0
+    assert reading.details == {}

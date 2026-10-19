@@ -19,6 +19,9 @@ env/
 *.swp
 *.swo
 
+# Agent/tool session state (Codex/CLI working dirs)
+.ori/
+
 # Testing
 .pytest_cache/
 .coverage
