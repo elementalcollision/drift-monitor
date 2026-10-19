@@ -1,3 +1,11 @@
+---
+type: "Reference"
+title: "CLI & Testing"
+description: "The drift-monitor CLI subcommands, JSONL storage layer, synthetic drift simulation, the test suite, and the bundled validation data from RTX 5090 runs."
+tags: [cli, testing, storage, simulation, validation]
+generated: { by: "openwiki/0.7.2", at: "2026-10-19T08:52:43.736Z" }
+---
+
 # CLI & Testing
 
 ## CLI
@@ -14,11 +22,15 @@ Also runnable as a module: `python -m drift_monitor`
 
 Runs all three instruments (GhostLexicon, BehavioralFootprint, SemanticDrift) on pre/post JSONL files and prints a composite `DriftReport` as JSON.
 
-Common options for `run`, `ghost-lexicon`, `behavioral`, `semantic`:
+Common options for `run`, `ghost-lexicon`, `behavioral`, `semantic`, `hedging`:
 - `--pre` (required): Pre-compression JSONL file path.
 - `--post` (required): Post-compression JSONL file path.
 - `--text-field` (default: `text`): JSON field containing the text content.
 - `--tools-field` (default: `tools`): JSON field containing the tool list.
+
+`run`-only options:
+- `--permutations N` (default `0`): if > 0, run a permutation test with `N` reshuffles and add a `significance` block (p-value) to the JSON output. Uses keyword-mode semantics regardless of the instruments' mode.
+- `--seed` (default `0`): random seed for the permutation test.
 
 #### `drift-monitor ghost-lexicon --pre ... --post ...`
 
@@ -32,13 +44,17 @@ Runs only the Behavioral Footprint instrument.
 
 Runs only the Semantic Drift instrument (keyword overlap mode; embeddings not used in CLI).
 
+#### `drift-monitor hedging --pre ... --post ...`
+
+Runs only the opt-in Hedging Language instrument and prints its `InstrumentReading` as JSON. Not part of `run` — it is a standalone surface for the lexical confidence-erosion detector.
+
 #### `drift-monitor demo`
 
 Runs an end-to-end demo with synthetic data across all `DriftMode` values. Prints per-instrument scores, severity, composite score, and compression type for each mode.
 
 #### `drift-monitor validate --trials 10 --seed 42`
 
-Runs the validation suite: generates synthetic drift pairs across all modes, runs each instrument, and reports detection rates. Exits with code 1 if the `framing` mode detection rate is ≥ 30% (instruments should NOT detect framing drift — it's intentionally invisible).
+Runs the validation suite: generates synthetic drift pairs across all modes, runs each instrument, and reports detection rates. For `framing` mode the surface trio (ghost lexicon, behavioral, semantic) must stay **undetected** — a detection rate ≥ 30% is a FAIL (the validator exits with code 1). The hedging instrument is expected to catch `framing`'s hedging qualifiers and is marked `ok` for that mode; other instruments are marked `ok` when their detection rate clears.
 
 ### JSONL Input Format
 
@@ -51,13 +67,15 @@ The CLI expects newline-delimited JSON with `text` and `tools` fields:
 
 ### CLI Internal Flow
 
-The `_load_and_run()` helper in `cli.py`:
-1. Reads pre/post JSONL via `read_jsonl()`.
-2. Creates all three instruments with default settings.
-3. Feeds pre-records to each instrument (extracting `text` and `tools` fields).
-4. Calls `mark_boundary()` on each instrument.
-5. Feeds post-records.
-6. Collects readings, scores with `DriftScorer()`, returns `report.to_dict()`.
+The CLI internal flow (see `_load_and_run()` in `cli.py`):
+1. Reads pre/post JSONL via `read_jsonl()`; a missing-but-present file (permission error, directory, etc.) is converted to a friendly stderr message + `exit(1)`. Empty pre/post files also exit `1`.
+2. Warns (but does not fail) if no record contains the requested `--text-field` — a wrong field name would otherwise silently yield empty text and zero drift.
+3. Creates all three instruments with `SemanticDrift(use_embeddings=False)`.
+4. Feeds pre-records to each instrument (extracting `text` and `tools` fields).
+5. Calls `mark_boundary()` on each instrument.
+6. Feeds post-records.
+7. Collects readings, scores with `DriftScorer()`, returns `report.to_dict()`.
+8. If `--permutations > 0`, runs `permutation_test()` on the first instrument's windows (all instruments share the same stream) and adds a `significance` block.
 
 ## Storage Layer
 

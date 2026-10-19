@@ -1,3 +1,10 @@
+---
+type: "Reference"
+title: "Harness & Live Monitoring"
+description: "DriftHarness for live experiment loops — DriftConfig, the nudge system, edge-triggered alert hooks, strategy classification, TSV analysis, and autoresearch-unified integration."
+tags: [harness, monitoring, alerts, nudges, autoresearch]
+---
+
 # Harness & Live Monitoring
 
 The `DriftHarness` provides plug-and-play drift monitoring for live experiment loops — particularly autonomous hyperparameter optimization runs like [autoresearch-unified](https://github.com/elementalcollision/autoresearch-unified). It wraps the three instruments, manages window boundaries automatically, writes drift readings to JSONL, and generates actionable nudge messages when drift thresholds are exceeded.

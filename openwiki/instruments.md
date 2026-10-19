@@ -1,3 +1,10 @@
+---
+type: "Reference"
+title: "Instruments"
+description: "The four drift instruments — Ghost Lexicon, Behavioral Footprint, Semantic Drift, and opt-in Hedging Language — their algorithms, thresholds, configuration, and the permutation-test significance layer."
+tags: [instruments, ghost-lexicon, behavioral, semantic, hedging, significance]
+---
+
 # Instruments
 
 drift-monitor uses three complementary instruments to detect different dimensions of behavioral drift, plus an opt-in fourth (Hedging Language) for confidence erosion. Each operates independently on the same dual-window observations and produces a score from 0.0 (no drift) to 1.0 (complete drift).
