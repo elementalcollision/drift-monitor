@@ -6,7 +6,7 @@
 
 **Behavioral drift detection for AI agents across context compression boundaries.**
 
-When an AI agent's context fills up and gets compressed (summarized, truncated, or window-shifted), it can silently lose specialized vocabulary, shift tool-call preferences, or narrow its conceptual framing. drift-monitor detects these changes using three complementary instruments and provides actionable nudges to course-correct.
+When an AI agent's context fills up and gets compressed (summarized, truncated, or window-shifted), it can silently lose specialized vocabulary, shift tool-call preferences, or narrow its conceptual framing. drift-monitor detects these changes using three complementary instruments (plus an opt-in fourth for hedging language) and provides actionable nudges to course-correct.
 
 Methodology inspired by [morrow.run's compression-monitor](https://morrow.run) (v0.2.1, MIT License). This is an independent implementation -- no code was copied from the original.
 
@@ -93,7 +93,9 @@ print(f"Drift: {report.composite_score:.3f} ({report.compression_type.name})")
 
 Detects loss of low-frequency, high-precision vocabulary after compression. When an agent loses access to specialized terms like "idempotent", "memoization", or "eigendecomposition" and starts using generic alternatives, Ghost Lexicon catches it.
 
-**How it works:** Extracts specialized vocabulary (terms with `min_freq >= 2`, `min_length >= 4`, excluding stop words) from the anchor window, then measures what fraction disappeared from recent output.
+**How it works:** Extracts specialized vocabulary (terms with `min_freq >= 2`, `min_length >= 4`, excluding stop words) from the anchor window, then measures what fraction disappeared from recent output. Tokenization is Unicode-aware, so non-English text is measured correctly.
+
+Opt-in `GhostLexicon(idf_weighting=True)` weights each lost term by its within-window inverse document frequency, so losing a rare, specific term counts more than losing a common one.
 
 | Score | Interpretation |
 |-------|---------------|
@@ -105,7 +107,7 @@ Detects loss of low-frequency, high-precision vocabulary after compression. When
 
 Tracks shifts in tool-call ratios and response shape. If an agent was using `search`, `code`, and `analyze` tools evenly but post-compression only uses `search`, that's behavioral drift.
 
-**How it works:** Computes a weighted combination of tool distribution distance (total variation, weight 0.6) and response length change (normalized delta, weight 0.4).
+**How it works:** Computes a weighted combination of tool distribution distance (total variation, weight 0.6) and response length change (normalized delta, weight 0.4). Length can be measured in characters (default) or tokens via `BehavioralFootprint(length_metric="tokens")`, which is more robust across languages.
 
 ### Semantic Drift
 
@@ -191,6 +193,11 @@ scorer = DriftScorer(weights={
 })
 ```
 
+These three instruments make up the default composite. Hedging Language is opt-in and is
+*not* part of the composite by default; if you score a set that includes it, add a
+`"hedging_language"` key to `weights` (otherwise it receives a `1 / len(readings)` fallback
+weight).
+
 ## Harness Integration
 
 For live experiment loops (like autonomous hyperparameter optimization), the `DriftHarness` provides plug-and-play monitoring with an actionable nudge system.
@@ -260,6 +267,86 @@ Three tiers of nudges fire based on which thresholds are exceeded:
 
 Nudges include **strategy-specific suggestions** based on the detected experiment category (learning_rate, architecture, schedule, regularization, batch_size).
 
+## Session State, Alerts & Trend
+
+Beyond a single before/after score, drift-monitor can persist state across restarts, fire
+out-of-band alerts when drift crosses a threshold, and track drift *trend* across many
+compression boundaries.
+
+### State Persistence
+
+A versioned snapshot (fast load, full state) plus an append-only event tail (audit trail +
+crash recovery). Both `DriftMonitor` and `DriftHarness` round-trip their full state:
+
+```python
+from drift_monitor import DriftMonitor
+
+monitor = DriftMonitor()
+# ... observe(...), mark_boundary() ...
+monitor.save_state("monitor_state.json")
+
+restored = DriftMonitor.load_state("monitor_state.json")
+```
+
+For live experiment loops, the harness snapshots and later **restores**, fast-forwarding any
+event tail so observations logged after the snapshot are not lost:
+
+```python
+from drift_monitor.harness import DriftHarness, DriftConfig
+
+config = DriftConfig(event_log_path="events.jsonl")
+harness = DriftHarness(results_dir="./results", config=config)
+# ... observe_experiment(...) ...
+harness.save_state("harness_state.json")
+
+harness = DriftHarness.restore(
+    "harness_state.json",
+    results_dir="./results",
+    event_log_path="events.jsonl",
+)
+```
+
+Snapshots carry a `schema_version`; the library migrates older ones and raises
+`StateVersionError` for a version it cannot read. Register custom migrations with
+`register_migration(from_version, fn)`. See `openwiki/state-persistence.md` for the schema.
+
+### Drift Alerts
+
+Edge-triggered out-of-band alerts complement the in-band nudges: a hook fires once when a
+score crosses above its threshold and re-arms only after it drops back below — one alert per
+drift episode. Hooks are opt-in; no hooks means no behavior change. A raising hook is
+isolated so a bad webhook never breaks the experiment loop.
+
+```python
+from drift_monitor import Alert, WebhookHook
+
+def on_alert(alert: Alert) -> None:
+    print(alert.type, alert.severity, alert.message)
+
+harness.add_alert_hook(on_alert)                             # any (Alert) -> Any callable
+harness.add_alert_hook(WebhookHook("https://example.com/hook"))  # optional HTTP adapter
+```
+
+### Multi-Segment History
+
+`DualWindow` compares two windows around a *single* boundary. `SegmentHistory` tracks an
+arbitrary number of boundaries and reports the drift *trend* across them:
+
+```python
+from drift_monitor import SegmentHistory
+
+history = SegmentHistory()
+for text in outputs:
+    history.observe(text)
+    if was_compressed:
+        history.mark_boundary()      # closes the current segment, opens the next
+
+history.trend()             # composite drift per consecutive segment pair
+history.boundary_reports()  # a full DriftReport per boundary
+```
+
+See `openwiki/multi-segment.md` for details.
+
 ## CLI
 
 ```bash
@@ -286,15 +373,16 @@ drift-monitor validate --trials 50
 
 The `validate` command runs synthetic drift across all modes and reports detection rates:
 
-| Drift Mode | Detection Rate | Notes |
-|-----------|---------------|-------|
-| VOCABULARY | 100% | Specialized term replacement |
-| TOPIC | 100% | Complete domain shift |
-| TOOLCALL | 100% | Tool distribution change |
-| COMBINED | 100% | All modes simultaneously |
-| FRAMING | 0% | Intentionally undetectable (same vocab, different framing) |
+| Drift Mode | Detection | Notes |
+|-----------|-----------|-------|
+| VOCABULARY | Ghost 100% | Specialized term replacement |
+| TOPIC | Semantic 100% | Complete domain shift |
+| TOOLCALL | Behavioral 100% | Tool distribution change |
+| COMBINED | Ghost/Behavioral/Semantic 100% | All modes simultaneously |
+| FRAMING | Hedging 100% (surface 0%) | Same vocab/topic/tools — surface trio silent by design, caught by opt-in Hedging |
+| HEDGING | Hedging 100% | Confidence erosion: assertive → hedged phrasing |
 
-The 0% detection on FRAMING drift is by design -- it validates that the instruments don't produce false positives on subtle reframing that preserves vocabulary and tool usage.
+The surface trio (ghost / behavioral / semantic) deliberately reports 0% on FRAMING drift — that validates no false positives on subtle reframing that preserves vocabulary and tool usage. The opt-in Hedging Language instrument is what catches FRAMING and HEDGING modes.
 
 ## JSONL Output Format
 
