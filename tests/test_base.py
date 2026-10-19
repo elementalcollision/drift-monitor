@@ -1,5 +1,7 @@
 """Tests for the base instrument classes: InstrumentReading and Instrument."""
 
+from __future__ import annotations
+
 import pytest
 
 from drift_monitor.instruments.base import Instrument, InstrumentReading, Severity
