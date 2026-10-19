@@ -7,11 +7,14 @@ interoperability with other tools and pipelines.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
 import time
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def atomic_write(path: str | Path, content: str) -> None:
@@ -56,12 +59,17 @@ def append_jsonl(path: str | Path, record: dict[str, Any]) -> None:
 
 
 def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
-    """Read a JSONL file, skipping corrupt lines."""
+    """Read a JSONL file, skipping corrupt lines.
+
+    Corrupt lines (common after crashes) are skipped with a warning log
+    recording the line number.
+    """
     path = Path(path)
     if not path.exists():
         return []
 
     records = []
+    skipped = []
     with open(path) as f:
         for line_num, line in enumerate(f, 1):
             line = line.strip()
@@ -71,7 +79,15 @@ def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
                 records.append(json.loads(line))
             except json.JSONDecodeError:
                 # Skip corrupt trailing lines (common after crashes)
+                skipped.append(line_num)
                 continue
+    if skipped:
+        logger.warning(
+            "read_jsonl: skipped %d corrupt line(s) in %s: %s",
+            len(skipped),
+            path,
+            skipped[:10],
+        )
     return records
 
 
@@ -88,6 +104,10 @@ def save_drift_report(
     path: str | Path,
     report_dict: dict[str, Any],
 ) -> None:
-    """Save a drift report, adding a timestamp."""
-    report_dict["timestamp"] = time.time()
-    append_jsonl(path, report_dict)
+    """Save a drift report, adding an ISO-8601 UTC timestamp.
+
+    The caller's dict is not modified; a copy is appended.
+    """
+    record = dict(report_dict)
+    record["timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    append_jsonl(path, record)

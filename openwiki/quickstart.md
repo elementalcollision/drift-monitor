@@ -22,29 +22,34 @@ pip install "drift-monitor[embeddings] @ git+https://github.com/elementalcollisi
 git clone https://github.com/elementalcollision/drift-monitor.git
 cd drift-monitor
 pip install -e ".[dev]"
-pytest tests/ -v  # 60 tests
+pytest tests/ -v
 ```
 
 ## Quick Usage
 
 ```python
-from drift_monitor import GhostLexicon, BehavioralFootprint, SemanticDrift, DriftScorer
+from drift_monitor import DriftMonitor
 
-scorer = DriftScorer()
+monitor = DriftMonitor()
 
 # Feed pre-compression observations (anchor window)
 for text in pre_compression_outputs:
-    scorer.observe(text, metadata={"tools_used": ["search", "code"]})
+    monitor.observe(text, metadata={"tools": ["search", "code"]})
 
-scorer.mark_boundary()  # Context was compressed here
+monitor.mark_boundary()  # Context was compressed here
 
 # Feed post-compression observations (recent window)
 for text in post_compression_outputs:
-    scorer.observe(text, metadata={"tools_used": ["search"]})
+    monitor.observe(text, metadata={"tools": ["search"]})
 
-report = scorer.score()
-print(f"Drift: {report.composite:.3f} ({report.compression_type.name})")
+report = monitor.score()
+print(f"Drift: {report.composite_score:.3f} ({report.compression_type.name})")
 ```
+
+`DriftMonitor` bundles all three instruments plus the scorer. For finer
+control (custom instrument sets, per-instrument options), construct
+`GhostLexicon` / `BehavioralFootprint` / `SemanticDrift` directly, call
+`.read()` on each, and pass the readings to `DriftScorer().score(readings)`.
 
 For live experiment-loop monitoring with nudges:
 
@@ -71,6 +76,10 @@ drift-monitor run --pre anchor.jsonl --post recent.jsonl
 drift-monitor ghost-lexicon --pre anchor.jsonl --post recent.jsonl
 drift-monitor behavioral --pre anchor.jsonl --post recent.jsonl
 drift-monitor semantic --pre anchor.jsonl --post recent.jsonl
+drift-monitor hedging --pre anchor.jsonl --post recent.jsonl
+
+# Permutation-test p-value for the composite (adds a "significance" block)
+drift-monitor run --pre anchor.jsonl --post recent.jsonl --permutations 200
 
 # Interactive demo with synthetic data
 drift-monitor demo
@@ -88,6 +97,7 @@ The system compares an **anchor window** (pre-compression baseline) against a **
 | **Ghost Lexicon** | Loss of low-frequency, high-precision vocabulary | `drift_monitor/instruments/ghost_lexicon.py` |
 | **Behavioral Footprint** | Shifts in tool-call ratios and response shape | `drift_monitor/instruments/behavioral.py` |
 | **Semantic Drift** | Movement of conceptual center-of-gravity (keyword overlap or embeddings) | `drift_monitor/instruments/semantic.py` |
+| **Hedging Language** (opt-in) | Erosion of confident language ("must" → "could potentially") | `drift_monitor/instruments/hedging.py` |
 
 A **DriftScorer** combines readings into a composite score (0.0–1.0) and classifies the compression event type based on which instruments fired. See [Architecture](architecture.md) for the full data flow.
 
@@ -99,6 +109,7 @@ A **DriftScorer** combines readings into a composite score (0.0–1.0) and class
 | `VOCABULARY_ONLY` | Ghost Lexicon only | Surface compression, behavior intact |
 | `OPERATIONAL` | Ghost Lexicon + Behavioral | Systemic context loss |
 | `SEMANTIC_ONLY` | Semantic only | Topic changed, vocabulary intact |
+| `GHOST_SEMANTIC` | Ghost Lexicon + Semantic | Vocabulary loss + topic shift, behavior stable |
 | `INFRASTRUCTURE` | Behavioral only | Tool preferences shifted |
 | `FULL_BOUNDARY` | All three | Major compression boundary crossed |
 
@@ -113,3 +124,5 @@ A **DriftScorer** combines readings into a composite score (0.0–1.0) and class
 - [Instruments](instruments.md) — Detailed explanation of each of the three drift detection instruments, their algorithms, thresholds, and configuration.
 - [Harness & Live Monitoring](harness.md) — DriftHarness for experiment loops, DriftConfig, nudge system, strategy classification, and TSV analysis.
 - [CLI & Testing](cli-and-testing.md) — CLI commands, JSONL storage layer, synthetic drift simulation, test suite, and validation data.
+- [State Persistence](state-persistence.md) — snapshot + event-tail persistence, `to_state`/`from_state` API, and the schema-versioning/migration strategy.
+- [Multi-Segment History](multi-segment.md) — `SegmentHistory` for tracking drift across many compression boundaries and its trend.

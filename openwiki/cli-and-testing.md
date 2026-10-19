@@ -108,7 +108,7 @@ The simulation uses 20 technical terms (e.g., `idempotent`, `memoization`, `back
 
 **Source:** `tests/`
 
-Run with: `pytest tests/ -v` (60 tests total)
+Run with: `pytest tests/ -v`
 
 | File | Covers |
 |---|---|
@@ -119,6 +119,9 @@ Run with: `pytest tests/ -v` (60 tests total)
 | `tests/test_harness.py` | DriftHarness lifecycle, boundary auto-setting, strategy classification, nudge generation, `analyze_tsv` |
 | `tests/test_cli.py` | CLI subcommands, JSONL I/O, demo output, validate output |
 | `tests/test_simulate.py` | Drift mode generation, drift application functions, validation suite |
+| `tests/test_hedging.py` | Hedging increase detection, one-sidedness, framing-qualifier catch, multiword hedge counting |
+| `tests/test_significance.py` | Permutation test power on real drift, null behaviour on identical windows, determinism, monitor wrapper |
+| `tests/test_tokenizer_unicode.py` | ASCII token-stream identity, non-English tokenization, opt-in token length metric |
 
 ### Validation Results
 
