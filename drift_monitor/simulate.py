@@ -17,7 +17,8 @@ class DriftMode(Enum):
     TOPIC = "topic"
     TOOLCALL = "toolcall"
     COMBINED = "combined"
-    FRAMING = "framing"  # Intentionally invisible to surface instruments
+    FRAMING = "framing"  # Invisible to the surface trio; hedging may catch its qualifiers
+    HEDGING = "hedging"  # Confidence erosion: assertive → hedged phrasing
 
 
 # Domain-specific technical vocabulary that compression tends to strip
@@ -155,6 +156,33 @@ def apply_toolcall_drift(
     return result
 
 
+def apply_hedging_drift(texts: list[str], seed: int | None = None) -> list[str]:
+    """Prefix sentences with hedging qualifiers, preserving vocabulary.
+
+    Keeps technical terms intact (so the ghost lexicon stays silent) while
+    shifting the confidence register of the text.
+    """
+    rng = random.Random(seed)
+    prefixes = [
+        "Perhaps ",
+        "Possibly ",
+        "Arguably ",
+        "It seems that ",
+        "To some extent, ",
+    ]
+    result = []
+    for text in texts:
+        sentences = text.split(". ")
+        hedged = []
+        for s in sentences:
+            if not s:
+                continue
+            prefix = rng.choice(prefixes)
+            hedged.append(prefix + s[0].lower() + s[1:])
+        result.append(". ".join(hedged))
+    return result
+
+
 def apply_framing_drift(texts: list[str], seed: int | None = None) -> list[str]:
     """Shift implicit priors while preserving surface metrics.
 
@@ -229,6 +257,13 @@ def generate_drift_pair(
             for t, r in zip(post_texts, pre_records)
         ]
 
+    elif mode == DriftMode.HEDGING:
+        post_texts = apply_hedging_drift(pre_texts, seed=seed)
+        post_records = [
+            {"text": t, "tools": r["tools"]}
+            for t, r in zip(post_texts, pre_records)
+        ]
+
     else:
         post_records = list(pre_records)
 
@@ -246,6 +281,7 @@ def validate_instruments(
     from drift_monitor.instruments.ghost_lexicon import GhostLexicon
     from drift_monitor.instruments.behavioral import BehavioralFootprint
     from drift_monitor.instruments.semantic import SemanticDrift
+    from drift_monitor.instruments.hedging import HedgingLanguage
 
     results: dict[str, dict[str, list[float]]] = {}
 
@@ -254,6 +290,7 @@ def validate_instruments(
             "ghost_lexicon": [],
             "behavioral_footprint": [],
             "semantic_drift": [],
+            "hedging_language": [],
         }
 
         for trial in range(n_trials):
@@ -264,6 +301,7 @@ def validate_instruments(
                 (GhostLexicon, "ghost_lexicon"),
                 (BehavioralFootprint, "behavioral_footprint"),
                 (SemanticDrift, "semantic_drift"),
+                (HedgingLanguage, "hedging_language"),
             ]:
                 instr = InstrClass(window_size=20)
                 # Feed anchor

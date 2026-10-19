@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from drift_monitor.instruments.base import Instrument, InstrumentReading
+from drift_monitor.instruments.ghost_lexicon import tokenize
 from drift_monitor.window import DualWindow
 
 
@@ -36,13 +37,24 @@ class BehaviorFingerprint:
 def _compute_fingerprint(
     texts: list[str],
     metadata_list: list[dict[str, Any]],
+    length_metric: str = "chars",
 ) -> BehaviorFingerprint:
-    """Build a fingerprint from a window of observations."""
+    """Build a fingerprint from a window of observations.
+
+    ``length_metric``: "chars" (default, historical behaviour) or "tokens"
+    (word-token count — more robust across languages and agnostic to
+    character-width differences).
+    """
     if not texts:
         return BehaviorFingerprint()
 
     # Response lengths
-    lengths = [len(t) for t in texts]
+    if length_metric == "tokens":
+        lengths = [len(tokenize(t)) for t in texts]
+    elif length_metric == "chars":
+        lengths = [len(t) for t in texts]
+    else:
+        raise ValueError(f"unknown length_metric: {length_metric!r} (use 'chars' or 'tokens')")
     avg_len = sum(lengths) / len(lengths)
     variance = sum((n - avg_len) ** 2 for n in lengths) / len(lengths)
     std_len = math.sqrt(variance)
@@ -68,10 +80,10 @@ def _compute_fingerprint(
 
 
 def _distribution_distance(d1: dict[str, float], d2: dict[str, float]) -> float:
-    """Compute Jensen-Shannon-like distance between two distributions.
+    """Compute total variation distance between two distributions.
 
-    Returns 0.0-1.0. Uses a simplified symmetric KL approach without log
-    to avoid zero-division, normalized to [0,1].
+    Returns 0.0-1.0. Total variation distance (half the L1 distance between
+    the distributions), which is bounded [0, 1] and has no zero-division cases.
     """
     all_keys = set(d1) | set(d2)
     if not all_keys:
@@ -109,10 +121,12 @@ class BehavioralFootprint(Instrument):
         window_size: int = 50,
         tool_weight: float = 0.6,
         length_weight: float = 0.4,
+        length_metric: str = "chars",
     ) -> None:
         self.windows = DualWindow(window_size=window_size)
         self.tool_weight = tool_weight
         self.length_weight = length_weight
+        self.length_metric = length_metric
 
     def observe(self, text: str, metadata: dict[str, Any] | None = None) -> None:
         self.windows.add(text, metadata)
@@ -121,16 +135,34 @@ class BehavioralFootprint(Instrument):
         self.windows.mark_boundary()
 
     def score(self) -> float:
+        # Fast path: no measurement is possible. read() still reports
+        # (empty) details via _measure()'s guard.
         if not self.windows.boundary_marked or not self.windows.has_enough_data(1):
             return 0.0
+        return self._measure()[0]
+
+    def _measure(self) -> tuple[float, dict[str, Any]]:
+        """Single-pass score + details computation.
+
+        score() and read() both need both windows' fingerprints, so they
+        share this method instead of each recomputing them.
+        """
+        # score() returns 0.0 when no valid measurement is possible (no boundary
+        # marked or not enough data). Mirror that guard here so details stay
+        # empty instead of reporting fingerprint metrics (e.g. a spurious
+        # length_shift) computed over a window that never crossed a boundary.
+        if not self.windows.boundary_marked or not self.windows.has_enough_data(1):
+            return 0.0, {}
 
         anchor_fp = _compute_fingerprint(
             self.windows.anchor.texts,
             [o.metadata for o in self.windows.anchor.observations],
+            length_metric=self.length_metric,
         )
         recent_fp = _compute_fingerprint(
             self.windows.recent.texts,
             [o.metadata for o in self.windows.recent.observations],
+            length_metric=self.length_metric,
         )
 
         tool_dist = _distribution_distance(
@@ -141,54 +173,46 @@ class BehavioralFootprint(Instrument):
 
         # If no tools were observed, weight entirely on length
         if not anchor_fp.tool_distribution and not recent_fp.tool_distribution:
-            return min(1.0, length_dist)
-
-        return min(
-            1.0,
-            self.tool_weight * tool_dist + self.length_weight * length_dist,
-        )
-
-    def read(self) -> InstrumentReading:
-        s = self.score()
-
-        # score() returns 0.0 when no valid measurement is possible (no boundary
-        # marked or not enough data). Mirror that guard here so details stay empty
-        # instead of reporting fingerprint metrics (e.g. a spurious length_shift)
-        # computed over a window that never crossed a boundary.
-        if not self.windows.boundary_marked or not self.windows.has_enough_data(1):
-            return InstrumentReading(
-                instrument=self.name,
-                score=s,
-                severity=self._classify(s),
-                details={},
+            score = min(1.0, length_dist)
+        else:
+            score = min(
+                1.0,
+                self.tool_weight * tool_dist + self.length_weight * length_dist,
             )
 
-        anchor_fp = _compute_fingerprint(
-            self.windows.anchor.texts,
-            [o.metadata for o in self.windows.anchor.observations],
-        )
-        recent_fp = _compute_fingerprint(
-            self.windows.recent.texts,
-            [o.metadata for o in self.windows.recent.observations],
-        )
+        details = {
+            "anchor_fingerprint": anchor_fp.to_dict(),
+            "recent_fingerprint": recent_fp.to_dict(),
+            "tool_distance": round(tool_dist, 4),
+            "length_shift": round(length_dist, 4),
+        }
+        return score, details
 
+    def read(self) -> InstrumentReading:
+        s, details = self._measure()
         return InstrumentReading(
             instrument=self.name,
             score=s,
             severity=self._classify(s),
-            details={
-                "anchor_fingerprint": anchor_fp.to_dict(),
-                "recent_fingerprint": recent_fp.to_dict(),
-                "tool_distance": round(
-                    _distribution_distance(
-                        anchor_fp.tool_distribution,
-                        recent_fp.tool_distribution,
-                    ),
-                    4,
-                ),
-                "length_shift": round(_length_shift(anchor_fp, recent_fp), 4),
-            },
+            details=details,
         )
 
     def reset(self) -> None:
         self.windows.reset()
+
+    def _config_to_state(self) -> dict[str, Any]:
+        return {
+            "tool_weight": self.tool_weight,
+            "length_weight": self.length_weight,
+            "length_metric": self.length_metric,
+        }
+
+    @classmethod
+    def _construct_from_state(cls, state: dict[str, Any]) -> Instrument:
+        cfg = state["config"]
+        return cls(
+            window_size=state["windows"]["window_size"],
+            tool_weight=cfg["tool_weight"],
+            length_weight=cfg["length_weight"],
+            length_metric=cfg["length_metric"],
+        )

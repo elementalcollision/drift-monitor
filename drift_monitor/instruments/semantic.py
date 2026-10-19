@@ -9,12 +9,14 @@ overlap fallback for zero-dependency operation.
 
 from __future__ import annotations
 
+import logging
 import math
 from collections import Counter
+from functools import lru_cache
 from typing import Any
 
 from drift_monitor.instruments.base import Instrument, InstrumentReading
-from drift_monitor.instruments.ghost_lexicon import tokenize, _STOP_WORDS
+from drift_monitor.instruments.ghost_lexicon import tokenize, _STOP_WORDS, within_window_idf
 from drift_monitor.window import DualWindow
 
 # Optional embedding support
@@ -25,15 +27,53 @@ try:
 except ImportError:
     _HAS_EMBEDDINGS = False
 
+logger = logging.getLogger(__name__)
 
-def _keyword_overlap(texts_a: list[str], texts_b: list[str]) -> float:
+# Model cache: loading a SentenceTransformer dominates runtime, so load each
+# model once per process instead of once per score() call.
+_MODEL_CACHE: dict[str, Any] = {}
+
+
+def _get_model(model_name: str) -> Any:
+    """Return a cached SentenceTransformer instance for the given model."""
+    model = _MODEL_CACHE.get(model_name)
+    if model is None:
+        model = SentenceTransformer(model_name)
+        _MODEL_CACHE[model_name] = model
+    return model
+
+
+@lru_cache(maxsize=256)
+def _encode_centroid(texts: tuple[str, ...], model_name: str) -> tuple[float, ...]:
+    """Embed a window and return its centroid (cached per window content)."""
+    model = _get_model(model_name)
+    emb = model.encode(list(texts))
+    return tuple(sum(col) / len(col) for col in zip(*emb))
+
+
+def _keyword_overlap(
+    texts_a: list[str],
+    texts_b: list[str],
+    idf_weighting: bool = False,
+) -> float:
     """Compute semantic drift via keyword distribution overlap.
 
     Returns 0.0 (identical) to 1.0 (completely different).
     This is the zero-dependency fallback.
+
+    With ``idf_weighting``, the distribution becomes tf-idf: each term's
+    frequency is multiplied by its within-window inverse document frequency, so
+    rare (high-information) terms dominate the similarity instead of common
+    non-stop words.
     """
     if not texts_a or not texts_b:
         return 0.0
+
+    idf = (
+        within_window_idf(list(texts_a) + list(texts_b))
+        if idf_weighting
+        else None
+    )
 
     def _build_distribution(texts: list[str]) -> dict[str, float]:
         counter: Counter[str] = Counter()
@@ -41,7 +81,9 @@ def _keyword_overlap(texts_a: list[str], texts_b: list[str]) -> float:
             tokens = [t for t in tokenize(text) if t not in _STOP_WORDS and len(t) > 2]
             counter.update(tokens)
         total = sum(counter.values()) or 1
-        return {w: c / total for w, c in counter.items()}
+        if idf is None:
+            return {w: c / total for w, c in counter.items()}
+        return {w: (c / total) * idf.get(w, 1.0) for w, c in counter.items()}
 
     dist_a = _build_distribution(texts_a)
     dist_b = _build_distribution(texts_b)
@@ -67,14 +109,8 @@ def _embedding_drift(texts_a: list[str], texts_b: list[str], model_name: str) ->
 
     Requires sentence-transformers. Returns 0.0-1.0.
     """
-    model = SentenceTransformer(model_name)
-
-    emb_a = model.encode(texts_a)
-    emb_b = model.encode(texts_b)
-
-    # Compute centroids
-    centroid_a = [sum(col) / len(col) for col in zip(*emb_a)]
-    centroid_b = [sum(col) / len(col) for col in zip(*emb_b)]
+    centroid_a = _encode_centroid(tuple(texts_a), model_name)
+    centroid_b = _encode_centroid(tuple(texts_b), model_name)
 
     # Cosine similarity between centroids
     dot = sum(a * b for a, b in zip(centroid_a, centroid_b))
@@ -104,13 +140,22 @@ class SemanticDrift(Instrument):
         window_size: int = 50,
         model_name: str = "all-MiniLM-L6-v2",
         use_embeddings: bool | None = None,
+        idf_weighting: bool = False,
     ) -> None:
         self.windows = DualWindow(window_size=window_size)
         self.model_name = model_name
+        self.idf_weighting = idf_weighting
         # Auto-detect embedding support if not explicitly set
         self._use_embeddings = (
             use_embeddings if use_embeddings is not None else _HAS_EMBEDDINGS
         )
+        if self._use_embeddings and not _HAS_EMBEDDINGS:
+            logger.warning(
+                "SemanticDrift: use_embeddings=True but sentence-transformers "
+                "is not installed; falling back to keyword overlap. Install "
+                'with: pip install "drift-monitor[embeddings]"'
+            )
+            self._use_embeddings = False
 
     @property
     def method(self) -> str:
@@ -132,7 +177,9 @@ class SemanticDrift(Instrument):
         if self._use_embeddings and _HAS_EMBEDDINGS:
             return _embedding_drift(anchor_texts, recent_texts, self.model_name)
 
-        return _keyword_overlap(anchor_texts, recent_texts)
+        return _keyword_overlap(
+            anchor_texts, recent_texts, idf_weighting=self.idf_weighting
+        )
 
     def read(self) -> InstrumentReading:
         s = self.score()
@@ -145,3 +192,21 @@ class SemanticDrift(Instrument):
 
     def reset(self) -> None:
         self.windows.reset()
+
+    def _config_to_state(self) -> dict[str, Any]:
+        return {
+            "model_name": self.model_name,
+            "use_embeddings": self._use_embeddings,
+            "idf_weighting": self.idf_weighting,
+        }
+
+    @classmethod
+    def _construct_from_state(cls, state: dict[str, Any]) -> Instrument:
+        cfg = state["config"]
+        return cls(
+            window_size=state["windows"]["window_size"],
+            model_name=cfg["model_name"],
+            use_embeddings=cfg["use_embeddings"],
+            # default False keeps pre-idf state loadable
+            idf_weighting=cfg.get("idf_weighting", False),
+        )

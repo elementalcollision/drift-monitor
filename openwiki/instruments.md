@@ -1,6 +1,6 @@
 # Instruments
 
-drift-monitor uses three complementary instruments to detect different dimensions of behavioral drift. Each operates independently on the same dual-window observations and produces a score from 0.0 (no drift) to 1.0 (complete drift).
+drift-monitor uses three complementary instruments to detect different dimensions of behavioral drift, plus an opt-in fourth (Hedging Language) for confidence erosion. Each operates independently on the same dual-window observations and produces a score from 0.0 (no drift) to 1.0 (complete drift).
 
 ## Ghost Lexicon
 
@@ -10,9 +10,9 @@ Detects loss of low-frequency, high-precision vocabulary after compression. When
 
 ### Algorithm
 
-1. **Tokenize** all text in each window using a regex tokenizer (`[a-zA-Z][a-zA-Z0-9_-]*(?:'[a-zA-Z]+)?`), lowercased.
+1. **Tokenize** all text in each window using a regex tokenizer (`[^\W\d_][\w-]*(?:'[\w]+)?`, Unicode-aware — non-English text tokenizes correctly, and pure-ASCII input yields the same tokens as the historical `[a-zA-Z]` pattern), lowercased.
 2. **Extract specialized vocabulary** from the anchor window: terms that appear ≥ `min_freq` times (default 2), are ≥ `min_length` characters (default 4), and are not stop words. The stop word list is a hardcoded frozenset of ~100 common English words (`_STOP_WORDS`).
-3. **Compute decay:** For each anchor specialized term, check if it appears in the recent window (using `min_freq=1` for recent — only presence matters). Score = fraction of anchor specialized terms missing from recent.
+3. **Compute decay:** For each anchor specialized term, check if it appears in the recent window (using `min_freq=1` for recent — only presence matters). Score = fraction of anchor specialized terms missing from recent. With `idf_weighting=True`, each lost term is instead weighted by its within-window inverse document frequency, so losing a rare (concentrated) jargon term moves the score more than losing a term that appears in every observation.
 
 ### Configuration
 
@@ -21,6 +21,7 @@ GhostLexicon(
     window_size=50,   # max observations per window
     min_freq=2,       # minimum frequency in anchor to be "specialized"
     min_length=4,     # minimum term length
+    idf_weighting=False,  # opt-in rarity-weighted decay (see below)
 )
 ```
 
@@ -34,8 +35,8 @@ GhostLexicon(
 ### Reading Details
 
 The `read()` method returns details including:
-- `anchor_vocab_size`: number of specialized terms in anchor
-- `recent_vocab_size`: number of specialized terms in recent
+- `anchor_specialized_count`: number of specialized terms in anchor
+- `lost_count`: number of specialized terms missing from recent
 - `lost_terms`: list of terms present in anchor but missing from recent
 
 ### Score Interpretation
@@ -122,8 +123,11 @@ SemanticDrift(
     window_size=50,
     model_name="all-MiniLM-L6-v2",  # only used with embeddings
     use_embeddings=None,  # None = auto-detect; True/False to force
+    idf_weighting=False,  # opt-in tf-idf weighting (keyword mode only)
 )
 ```
+
+`idf_weighting=True` turns the keyword-overlap distribution into **tf-idf**: each term's frequency is multiplied by its within-window inverse document frequency, so rare high-information terms dominate the similarity instead of common non-stop words. It has no effect in embedding mode.
 
 Install embedding support:
 
@@ -157,6 +161,37 @@ If `use_embeddings` is `None` (default), the instrument auto-detects whether `se
 | Quick CLI analysis, CI/CD | Keyword overlap (zero deps) |
 | Sensitive detection of subtle topic shifts | Embedding centroid |
 | Production experiment loops (harness) | Keyword overlap (default in `DriftHarness`) |
+
+## Hedging Language (opt-in)
+
+**Source:** `drift_monitor/instruments/hedging.py`
+
+Detects erosion of assertive language: "must" becomes "could potentially", "requires" becomes "might benefit from". The surface trio stays silent on this (vocabulary preserved, topic unchanged), so it is a separate, opt-in instrument — it is **not** part of `DriftMonitor`'s default set, and including its readings in a `DriftScorer` composite requires passing explicit weights (unknown instruments default to equal weight, which dilutes the trio).
+
+- **Score:** one-sided — only an *increase* in hedge density (hedges per word) from anchor to recent counts. A rise of 5 hedges per 100 words saturates at 1.0. Growing confidence is not treated as drift.
+- **Hedge list:** multi-word qualifiers and hedging adverbs only; the bare modals "may"/"might"/"could" are deliberately **excluded** because they are ubiquitous in ordinary technical prose (and "May" would collide with the month under case-insensitive matching). This keeps real-text false positives down while still catching FRAMING's "could potentially" / "might benefit" substitutions.
+- **Scope note:** this is a lexical detector for hedging *style*. `DriftMode.FRAMING`'s invisibility guarantee applies to the three surface instruments; FRAMING's synthetic substitutions are literally hedging qualifiers, so this instrument fires on them (by design).
+
+> **Research item (open):** detection *precision* on real text is unvalidated. The lexical hedge list — even after dropping the bare modals — is exercised only against synthetic framing substitutions. Whether "count the multi-word qualifiers" is the right model for confidence erosion, and how often ordinary agent prose trips it, are open questions. Before leaning on this instrument in production: build a real-text benchmark (pre/post genuine agent outputs) and compare against an embedding/classifier baseline.
+
+### Configuration
+
+```python
+HedgingLanguage(window_size=50)
+```
+
+### Thresholds
+
+| Threshold | Value |
+|---|---|
+| `high_threshold` | 0.5 |
+| `moderate_threshold` | 0.2 |
+
+## Significance Testing
+
+**Source:** `drift_monitor/significance.py`
+
+Composites over small windows can be noise. `permutation_test()` pools the anchor + recent observations, reshuffles them across a sham boundary `n_permutations` times, recomputes the composite, and reports `p_value` — the probability of drift this strong if the boundary were arbitrary. `monitor_significance(monitor)` is the convenience wrapper; `drift-monitor run --permutations 200` adds a `significance` block to the CLI output. Null recomputations use keyword-mode semantics; this is an offline analysis tool, not a hot-path call. `monitor_significance` only accepts a monitor whose composite it can faithfully reproduce (the default trio in keyword mode); a custom instrument set or embedding-mode semantics raises `ValueError`, since a silently mismatched `observed_composite` would make the p-value meaningless — use `permutation_test()` directly in those cases.
 
 ## Adding a New Instrument
 

@@ -77,3 +77,63 @@ def test_score_zero_before_boundary():
     sd = SemanticDrift(use_embeddings=False)
     sd.observe("some text")
     assert sd.score() == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Embedding path (sentence-transformers monkeypatched — no network needed)
+# ---------------------------------------------------------------------------
+
+
+class _FakeTransformer:
+    """Deterministic stand-in for SentenceTransformer: vectors from a hash."""
+
+    instances = 0
+
+    def __init__(self, model_name: str) -> None:
+        self.model_name = model_name
+        type(self).instances += 1
+
+    def encode(self, texts):
+        out = []
+        for text in texts:
+            h = sum((i + 1) * ord(c) for i, c in enumerate(text)) % 97
+            v = [((h >> k) & 1) * 1.0 + 0.1 for k in range(8)]
+            out.append(v)
+        return out
+
+
+def test_model_loaded_once_per_process(monkeypatch):
+    import drift_monitor.instruments.semantic as sem
+
+    sem._MODEL_CACHE.clear()
+    sem._encode_centroid.cache_clear()
+    _FakeTransformer.instances = 0
+    monkeypatch.setattr(sem, "SentenceTransformer", _FakeTransformer, raising=False)
+    monkeypatch.setattr(sem, "_HAS_EMBEDDINGS", True)
+
+    sd = sem.SemanticDrift(use_embeddings=True)
+    for t in ["alpha beta gamma", "delta epsilon zeta", "eta theta iota"]:
+        sd.observe(t)
+    sd.mark_boundary()
+    for t in ["kappa lambda mu", "nu xi omicron", "pi rho sigma"]:
+        sd.observe(t)
+
+    for _ in range(3):
+        sd.score()
+
+    # Two window encodes, one model instantiation — not one per score() call.
+    assert _FakeTransformer.instances == 1
+    assert sem._get_model("all-MiniLM-L6-v2").model_name == "all-MiniLM-L6-v2"
+
+
+def test_missing_embeddings_warns_and_falls_back(monkeypatch, caplog):
+    import logging
+
+    import drift_monitor.instruments.semantic as sem
+
+    monkeypatch.setattr(sem, "_HAS_EMBEDDINGS", False)
+    with caplog.at_level(logging.WARNING):
+        sd = sem.SemanticDrift(use_embeddings=True)
+    assert not sd._use_embeddings
+    assert sd.method == "keyword"
+    assert any("falling back" in r.message for r in caplog.records)

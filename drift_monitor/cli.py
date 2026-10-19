@@ -9,6 +9,7 @@ import sys
 from drift_monitor.instruments.ghost_lexicon import GhostLexicon
 from drift_monitor.instruments.behavioral import BehavioralFootprint
 from drift_monitor.instruments.semantic import SemanticDrift
+from drift_monitor.instruments.hedging import HedgingLanguage
 from drift_monitor.scoring import DriftScorer
 from drift_monitor.storage import read_jsonl
 from drift_monitor.simulate import (
@@ -38,6 +39,8 @@ def _load_and_run(
     post_path: str,
     text_field: str = "text",
     tools_field: str = "tools",
+    permutations: int = 0,
+    seed: int = 0,
 ) -> dict:
     """Load JSONL files and run all instruments."""
     pre_records = _read_records_or_exit(pre_path)
@@ -79,12 +82,35 @@ def _load_and_run(
     readings = [instr.read() for instr in instruments]
     scorer = DriftScorer()
     report = scorer.score(readings)
-    return report.to_dict()
+    result = report.to_dict()
+
+    if permutations > 0:
+        from drift_monitor.significance import permutation_test
+
+        # All instruments received the same observation stream; read the
+        # windows from the first one.
+        windows = instruments[0].windows
+        sig = permutation_test(
+            list(windows.anchor.observations),
+            list(windows.recent.observations),
+            weights=scorer.weights,
+            n_permutations=permutations,
+            seed=seed,
+        )
+        result["significance"] = sig.to_dict()
+
+    return result
 
 
 def cmd_run(args: argparse.Namespace) -> None:
     """Run all instruments on pre/post JSONL files."""
-    result = _load_and_run(args.pre, args.post, args.text_field, args.tools_field)
+    result = _load_and_run(
+        args.pre,
+        args.post,
+        args.text_field,
+        args.tools_field,
+        permutations=args.permutations,
+    )
     print(json.dumps(result, indent=2))
 
 
@@ -133,6 +159,22 @@ def cmd_semantic(args: argparse.Namespace) -> None:
         sd.observe(r.get(args.text_field, ""))
 
     reading = sd.read()
+    print(json.dumps(reading.to_dict(), indent=2))
+
+
+def cmd_hedging(args: argparse.Namespace) -> None:
+    """Run hedging language instrument only."""
+    pre_records = _read_records_or_exit(args.pre)
+    post_records = _read_records_or_exit(args.post)
+
+    hl = HedgingLanguage()
+    for r in pre_records:
+        hl.observe(r.get(args.text_field, ""))
+    hl.mark_boundary()
+    for r in post_records:
+        hl.observe(r.get(args.text_field, ""))
+
+    reading = hl.read()
     print(json.dumps(reading.to_dict(), indent=2))
 
 
@@ -188,8 +230,9 @@ def cmd_validate(args: argparse.Namespace) -> None:
         for instr_name, stats in instruments.items():
             rate = stats["detection_rate"]
             mean = stats["mean_score"]
-            # Framing should be undetected; everything else should detect
-            if mode == "framing":
+            # Framing must stay undetected by the SURFACE trio; the hedging
+            # instrument is expected to catch framing's hedging qualifiers.
+            if mode == "framing" and instr_name != "hedging_language":
                 status = "PASS" if rate < 0.3 else "FAIL"
             else:
                 # At least the relevant instrument should detect its drift type
@@ -237,6 +280,16 @@ def main(argv: list[str] | None = None) -> None:
     # run
     p_run = subparsers.add_parser("run", help="Run all instruments")
     _add_io_args(p_run)
+    p_run.add_argument(
+        "--permutations",
+        type=int,
+        default=0,
+        help="If > 0, run a permutation test with this many reshuffles and "
+        "add a 'significance' block (p-value) to the output",
+    )
+    p_run.add_argument(
+        "--seed", type=int, default=0, help="Random seed for the permutation test"
+    )
     p_run.set_defaults(func=cmd_run)
 
     # ghost-lexicon
@@ -253,6 +306,11 @@ def main(argv: list[str] | None = None) -> None:
     p_sd = subparsers.add_parser("semantic", help="Run semantic drift only")
     _add_io_args(p_sd)
     p_sd.set_defaults(func=cmd_semantic)
+
+    # hedging
+    p_hl = subparsers.add_parser("hedging", help="Run hedging language only")
+    _add_io_args(p_hl)
+    p_hl.set_defaults(func=cmd_hedging)
 
     # demo
     p_demo = subparsers.add_parser("demo", help="Run demo with synthetic data")
