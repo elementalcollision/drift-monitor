@@ -27,7 +27,6 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from drift_monitor.harness import DriftHarness, DriftConfig, classify_strategy
 
@@ -267,9 +266,9 @@ def main():
             print(f"  Compression type: {harness.last_report.compression_type.value}")
             nudge = harness.get_drift_nudge()
             if nudge:
-                print(f"  Active nudge: YES")
+                print("  Active nudge: YES")
             else:
-                print(f"  Active nudge: none (within bounds)")
+                print("  Active nudge: none (within bounds)")
 
         print(f"  Output: /tmp/drift-test/drift_{label}.jsonl")
 

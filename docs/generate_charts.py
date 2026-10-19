@@ -3,7 +3,6 @@
 
 import csv
 import json
-import os
 from pathlib import Path
 
 import matplotlib
@@ -201,13 +200,13 @@ def plot_drift_trajectory(drift_r1, drift_r3, out_path):
     x1 = [d["experiment_count"] for d in drift_r1]
     y1 = [d["composite_score"] for d in drift_r1]
     ax.plot(x1, y1, "s-", color="#1565C0", markersize=10, linewidth=2.5,
-            label=f"Run 1 (0.454 → 0.315, −30.6%)", zorder=3)
+            label="Run 1 (0.454 → 0.315, −30.6%)", zorder=3)
 
     # Run 3
     x3 = [d["experiment_count"] for d in drift_r3]
     y3 = [d["composite_score"] for d in drift_r3]
     ax.plot(x3, y3, "D-", color="#E65100", markersize=10, linewidth=2.5,
-            label=f"Run 3 (0.412 → 0.271, −34.2%)", zorder=3)
+            label="Run 3 (0.412 → 0.271, −34.2%)", zorder=3)
 
     # Threshold line
     ax.axhline(y=0.30, color="#E53935", linestyle=":", alpha=0.6, linewidth=1.5)
